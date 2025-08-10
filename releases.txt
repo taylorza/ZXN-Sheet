@@ -1,0 +1,2 @@
+2025/07/27 - Version 0.1
+- Initial release binary release
