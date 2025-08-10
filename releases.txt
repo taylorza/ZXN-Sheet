@@ -1,2 +1,6 @@
+2025/08/10 - Version 0.2
+- Added binary and hex conversion functions
+- Added initial support for complex functions like IF (more to come, like doing lookups etc.)
+
 2025/07/27 - Version 0.1
 - Initial release binary release

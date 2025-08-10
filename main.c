@@ -15,6 +15,8 @@
 #include "platform.h"
 #include "crtio.h"
 
+#define VERSION "0.2"
+
 #define MAX_COLS    26
 #define MAX_ROWS    256
 #define VIEW_COLS   6     // viewport width 
@@ -36,6 +38,8 @@
 #define MSK_EMPTY       (~FLG_EMPTY)
 #define MSK_VISITING    (~FLG_VISITING)
 
+#define MAX_FUNC_ARGS 5
+
 typedef enum { REDRAW_ALL, REDRAW_CONTENT } REDRAW_MODE;
 
 char ln[80];
@@ -54,10 +58,11 @@ typedef struct Value {
     ValType type;
     union {
         float  num;
-        const char* str;     // allocated if TYPE_STR, not allocated if TYPE_TEXT or TYPE_ERROR
+        char* str;     // allocated if TYPE_STR, not allocated if TYPE_TEXT or TYPE_ERROR
     };
 } Value;
 
+Value errInvalidArg = { .type = TYPE_ERROR };
 Value errExprInvalid = { .type = TYPE_ERROR };
 Value errExprDivZero = { .type = TYPE_ERROR };
 Value errExprCyclicRef = { .type = TYPE_ERROR };
@@ -71,7 +76,7 @@ Value errOutOfMemory = { .type = TYPE_ERROR };
 Value  make_num(float v);
 Value  make_str(const char* s);
 
-void   free_val(Value v);
+void   free_val(Value *v);
 void error(const char* fmt, ...);
 void status(const char* fmt, ...);
 
@@ -96,6 +101,10 @@ typedef struct HNode {
     Cell* cell;
     struct HNode* next;
 } HNode;
+
+uint8_t is_str_value(Value v) {
+    return v.type == TYPE_STR || v.type == TYPE_TEXT;
+}
 
 HNode* hash_table[CELL_TBL_SIZE] = { 0 }; // hash table for cells
 
@@ -128,7 +137,9 @@ typedef Value(*PFN_EVAL)(void* state);
 
 typedef enum {
     tokNone,
-    tokCellRef, tokRange, tokNumber, tokString, tokPlus, tokMinus, tokMul, tokDiv, tokMod, tokLParen, tokRParen, tokComma, tokEnd,
+    tokCellRef, tokRange, tokNumber, tokString, 
+    tokEq, tokNe, tokLt, tokLe, tokGt, tokGe, 
+    tokPlus, tokMinus, tokMul, tokDiv, tokMod, tokLParen, tokRParen, tokComma, tokEnd,
     tokScalarFunc,
     tokRangeFunc,
 
@@ -140,6 +151,8 @@ typedef struct Function {
     PFN_ACCUM pfn_accum;    // function accumulator
     PFN_EVAL pfn_eval;      // function evaluator
     TokenType tok_type;     // token type for this function
+    uint8_t min_args;       // minimum number of arguments
+    uint8_t max_args;       // maximum number of arguments
 } Function;
 
 void sum_range(void* state, Cell* cell);
@@ -170,28 +183,41 @@ Value log_eval(void* state);
 Value log10_eval(void* state);
 Value log2_eval(void* state);
 
+Value dec2bin_eval(void* state);
+Value bin2dec_eval(void* state);
+Value dec2hex_eval(void* state);
+Value hex2dec_eval(void* state);
+
+Value if_eval(void* state);
+
 Function functions[] = {
-    { "SUM", sum_range, sum_eval, tokRangeFunc},
-    { "AVG", sum_range, avg_eval, tokRangeFunc },
-    { "COUNT", count_range, count_eval, tokRangeFunc },
-    { "MAX", max_range, best_eval, tokRangeFunc },
-    { "MIN", min_range, best_eval, tokRangeFunc },
-    { "SIN", NULL, sin_eval, tokScalarFunc},
-    { "COS", NULL, cos_eval, tokScalarFunc},
-    { "TAN", NULL, tan_eval, tokScalarFunc},
-    { "ASIN", NULL, asin_eval, tokScalarFunc},
-    { "ACOS", NULL, acos_eval, tokScalarFunc},
-    { "ATAN", NULL, atan_eval, tokScalarFunc},
-    { "ABS", NULL, abs_eval, tokScalarFunc},
-    { "CEIL", NULL, ceil_eval, tokScalarFunc},
-    { "FLOOR", NULL, floor_eval, tokScalarFunc},
-    { "ROUND", NULL, round_eval, tokScalarFunc},
-    { "TRUNC", NULL, trunc_eval, tokScalarFunc},
-    { "SQRT", NULL, sqrt_eval, tokScalarFunc},
-    { "EXP", NULL, exp_eval, tokScalarFunc},
-    { "LOG", NULL, log_eval, tokScalarFunc},
-    { "LOG10", NULL, log10_eval, tokScalarFunc},
-    { "LOG2", NULL, log2_eval, tokScalarFunc},
+    { "SUM", sum_range, sum_eval, tokRangeFunc, 1, 1},
+    { "AVG", sum_range, avg_eval, tokRangeFunc, 1, 1 },
+    { "COUNT", count_range, count_eval, tokRangeFunc, 1, 1 },
+    { "MAX", max_range, best_eval, tokRangeFunc, 1, 1 },
+    { "MIN", min_range, best_eval, tokRangeFunc, 1, 1 },
+    { "SIN", NULL, sin_eval, tokScalarFunc, 1, 1},
+    { "COS", NULL, cos_eval, tokScalarFunc, 1, 1},
+    { "TAN", NULL, tan_eval, tokScalarFunc, 1, 1},
+    { "ASIN", NULL, asin_eval, tokScalarFunc, 1, 1},
+    { "ACOS", NULL, acos_eval, tokScalarFunc, 1, 1},
+    { "ATAN", NULL, atan_eval, tokScalarFunc, 1, 1},
+    { "ABS", NULL, abs_eval, tokScalarFunc, 1, 1},
+    { "CEIL", NULL, ceil_eval, tokScalarFunc, 1, 1},
+    { "FLOOR", NULL, floor_eval, tokScalarFunc, 1, 1},
+    { "ROUND", NULL, round_eval, tokScalarFunc, 1, 1},
+    { "TRUNC", NULL, trunc_eval, tokScalarFunc, 1, 1},
+    { "SQRT", NULL, sqrt_eval, tokScalarFunc, 1, 1},
+    { "EXP", NULL, exp_eval, tokScalarFunc, 1, 1},
+    { "LOG", NULL, log_eval, tokScalarFunc, 1, 1},
+    { "LOG10", NULL, log10_eval, tokScalarFunc, 1, 1},
+    { "LOG2", NULL, log2_eval, tokScalarFunc, 1, 1},
+    { "DEC2BIN", NULL, dec2bin_eval, tokScalarFunc, 1, 1},
+    { "BIN2DEC", NULL, bin2dec_eval, tokScalarFunc, 1, 1},
+    { "DEC2HEX", NULL, dec2hex_eval, tokScalarFunc, 1, 1},
+    { "HEX2DEC", NULL, hex2dec_eval, tokScalarFunc, 1, 1},
+    { "IF", NULL, if_eval, tokScalarFunc, 3, 3},
+
     { NULL, NULL }  /* sentinel */
 };
 
@@ -320,6 +346,27 @@ void get_token(void) {
     }
     else {
         switch (ch) {
+            case '=': tok_type = tokEq; next_char(); break;
+            case '<': 
+            next_char();
+            if (ch == '=') {
+                tok_type = tokLe; next_char();
+            } else if (ch == '>') {
+                tok_type = tokNe; next_char();
+            }
+            else {
+                tok_type = tokLt;
+            }
+            break;
+            case '>':
+                next_char();
+                if (ch == '=') {
+                    tok_type = tokGe; next_char();
+                }
+                else {
+                    tok_type = tokGt;
+                }
+            break;                
             case '+': tok_type = tokPlus; next_char(); break;
             case '-': tok_type = tokMinus; next_char(); break;
             case '*': tok_type = tokMul; next_char(); break;
@@ -328,6 +375,27 @@ void get_token(void) {
             case '(': tok_type = tokLParen; next_char(); break;
             case ')': tok_type = tokRParen; next_char(); break;
             case ',': tok_type = tokComma; next_char(); break;
+            case '\'': // string literal start
+            case '"': 
+                {
+                    char quote = ch;
+                    int i = 0;
+                    next_char();
+                    while (ch && ch != quote) {
+                        if (i < sizeof(token) - 1)
+                            token[i++] = ch;
+                        next_char();
+                    }
+                    if (ch == quote) {
+                        next_char(); // skip closing quote
+                        token[i] = 0;
+                        tok_type = tokString;
+                    }
+                    else {
+                        tok_type = tokError; // unterminated string
+                    }
+                }
+                break;
             default:
                 tok_type = tokError;
                 break;
@@ -360,13 +428,12 @@ Value make_str(const char* s) {
     return x;
 }
 
-void free_val(Value v) {
-    if (v.type == TYPE_STR && v.str) {
-        free(v.str);
-        v.str = NULL;
+void free_val(Value *v) {
+    if (v->type == TYPE_STR && v->str) {
+        free(v->str);        
     }
-    v.type = TYPE_NUM;
-    v.num = 0.0f;
+    v->type = TYPE_NULL;
+    v->str = NULL;
 }
 
 // Trim leading/trailing space
@@ -409,26 +476,20 @@ void remove_deps(Cell* c) {
 }
 
 #ifdef MEMDBG
-void remove_revdeps(void) {
-    for(int i = 0; i < CELL_TBL_SIZE; i++) {
-        HNode* node = hash_table[i];
-        while (node) {
-            Cell* c = node->cell;
-            Dep* d = c->revdeps;
-            while (d) {
-                Dep* t = d; d = d->next;
-                free(t);
-            }
-            c->revdeps = NULL;
-            node = node->next;
-        }
-    }
+void free_deplist(Dep *d) {
+    while (d) {
+        Dep* t = d; d = d->next;
+        free(t);
+    }        
 }
 
 void remove_cell(Cell* cell) {
     int h = (cell->col + (cell->row * 257)) % CELL_TBL_SIZE;
     HNode* node = hash_table[h];
     HNode* prev = NULL;
+
+    free_deplist(cell->deps);
+    free_deplist(cell->revdeps);
     while (node) {
         if (node->cell == cell) {
             if (prev) {
@@ -447,8 +508,7 @@ void remove_cell(Cell* cell) {
 
 void free_cell(Cell* c) {
     if (c->content) free(c->content);
-    free_val(c->cached);
-    remove_deps(c);
+    free_val(&c->cached);
     remove_cell(c);
     free(c);
 }
@@ -495,6 +555,7 @@ void propagate_dirty(Cell* c) {
 /* Evaluate a cell (with caching & cycle detect) */
 void eval_cell(Cell* c);
 Value eval_expr(void);
+Value eval_expr1(void);
 Value eval_term(void);
 Value eval_factor(void);
 
@@ -596,87 +657,157 @@ Value best_eval(void* state) {
 
 Value sin_eval(void* state) {
     Value arg = *(Value*)state;
+    if (arg.type != TYPE_NUM) return errExprExpectNumeric;
     Value v = make_num(sinf(arg.num));
     return v;
 }
 
 Value cos_eval(void* state) {
     Value arg = *(Value*)state;
+    if (arg.type != TYPE_NUM) return errExprExpectNumeric;
     Value v = make_num(cosf(arg.num));
     return v;
 }
 Value tan_eval(void* state) {
     Value arg = *(Value*)state;
+    if (arg.type != TYPE_NUM) return errExprExpectNumeric;
     Value v = make_num(tanf(arg.num));
     return v;
 }
 Value asin_eval(void* state) {
     Value arg = *(Value*)state;
+    if (arg.type != TYPE_NUM) return errExprExpectNumeric;
     Value v = make_num(asinf(arg.num));
     return v;
 }
 Value acos_eval(void* state) {
     Value arg = *(Value*)state;
+    if (arg.type != TYPE_NUM) return errExprExpectNumeric;
     Value v = make_num(acosf(arg.num));
     return v;
 }
 Value atan_eval(void* state) {
     Value arg = *(Value*)state;
+    if (arg.type != TYPE_NUM) return errExprExpectNumeric;
     Value v = make_num(atanf(arg.num));
     return v;
 }
 
 Value abs_eval(void* state) {
     Value arg = *(Value*)state;
+    if (arg.type != TYPE_NUM) return errExprExpectNumeric;
     Value v = make_num(fabsf(arg.num));
     return v;
 }
 Value ceil_eval(void* state) {
     Value arg = *(Value*)state;
+    if (arg.type != TYPE_NUM) return errExprExpectNumeric;
     Value v = make_num(ceilf(arg.num));
     return v;
 }
 Value floor_eval(void* state) {
     Value arg = *(Value*)state;
+    if (arg.type != TYPE_NUM) return errExprExpectNumeric;
     Value v = make_num(floorf(arg.num));
     return v;
 }
 Value round_eval(void* state) {
     Value arg = *(Value*)state;
+    if (arg.type != TYPE_NUM) return errExprExpectNumeric;
     Value v = make_num((float)(int)(arg.num + 0.5));
     return v;
 }
 Value trunc_eval(void* state) {
     Value arg = *(Value*)state;
+    if (arg.type != TYPE_NUM) return errExprExpectNumeric;
     Value v = make_num(truncf(arg.num));
     return v;
 }
 
 Value sqrt_eval(void* state) {
     Value arg = *(Value*)state;
+    if (arg.type != TYPE_NUM) return errExprExpectNumeric;
     Value v = make_num(sqrtf(arg.num));
     return v;
 }
 Value exp_eval(void* state) {
     Value arg = *(Value*)state;
+    if (arg.type != TYPE_NUM) return errExprExpectNumeric;
     Value v = make_num(expf(arg.num));
     return v;
 }
 Value log_eval(void* state) {
     Value arg = *(Value*)state;
+    if (arg.type != TYPE_NUM) return errExprExpectNumeric;
     Value v = make_num(logf(arg.num));
     return v;
 }
 Value log10_eval(void* state) {
     Value arg = *(Value*)state;
+    if (arg.type != TYPE_NUM) return errExprExpectNumeric;
     Value v = make_num(log10f(arg.num));
     return v;
 }
 Value log2_eval(void* state) {
     Value arg = *(Value*)state;
+    if (arg.type != TYPE_NUM) return errExprExpectNumeric;
     Value v = make_num(log2f(arg.num));
     return v;
 }
+
+Value dec2bin_eval(void* state) {
+    char b[32];
+    Value arg = *(Value*)state;
+    if (arg.type != TYPE_NUM) return errExprExpectNumeric;
+    int n = (int)arg.num;
+    itoa(n, b, 2);
+    Value v = make_str(b);
+    return v;
+}
+
+Value bin2dec_eval(void* state) {
+    Value arg = *(Value*)state;
+    char* endptr;
+    if (!is_str_value(arg)) return errInvalidArg;
+    int n = (int)strtol(arg.str, &endptr, 2);
+
+    if (*endptr != '\0') return errExprInvalid;
+
+    Value v = make_num((float)n);
+    return v;
+}
+
+Value dec2hex_eval(void* state) {
+    char b[32];
+    Value arg = *(Value*)state;
+    if (arg.type != TYPE_NUM) return errExprExpectNumeric;
+    int n = (int)arg.num;
+    itoa(n, b, 16);
+    Value v = make_str(b);
+    return v;
+}
+
+Value hex2dec_eval(void* state) {
+    Value arg = *(Value*)state;
+    char* endptr;
+    if (is_str_value(arg)) return errInvalidArg;
+    int n = (int)strtol(arg.str, &endptr, 16);
+
+    if (*endptr != '\0') return errExprInvalid;
+
+    Value v = make_num((float)n);
+    return v;
+}
+
+Value if_eval(void* state) {
+    Value* args = (Value*)state;
+    if (args[0].type != TYPE_NUM) {
+        return errExprExpectNumeric;
+    }
+    Value v = args[args[0].num ? 1 : 2]; // return true or false branch
+    return v;
+}
+    
 
 void set_range_dep(void* state, Cell* cell) {
     Cell* root = (Cell*)state;
@@ -736,9 +867,7 @@ void set_cell(int c, int r, const char* s) {
     char* txt = (char*)s;
     if (txt) txt = trim(txt);
     if (!txt || !*txt) {
-        free_val(p->cached);
-        p->cached.type = TYPE_NULL; // reset cached value
-        p->cached.str = NULL;
+        free_val(&p->cached);
         p->content = NULL;
         p->flags = 0;
         
@@ -750,6 +879,15 @@ void set_cell(int c, int r, const char* s) {
     if (*txt == '=') {
         p->flags |= FLG_FORMULA;
         p->content = strdup(txt);
+    }
+    else if (*txt =='\'') {
+        /* string literal */
+        p->flags &= MSK_FORMULA; // clear formula flag
+        p->content = strdup(txt);
+        if (p->content == NULL) {
+            error(errOutOfMemory.str);
+            return;
+        }
     }
     else {
         char* end;
@@ -800,7 +938,7 @@ void set_cell(int c, int r, const char* s) {
                     p,
                     set_range_dep,
                     NULL);
-                free_val(v);
+                free_val(&v);
             }
             get_token();
         }
@@ -821,8 +959,60 @@ Value parse_expr(char* e) {
     return v;
 }
 
-/* Grammar: expr = term {(+|-) term} */
+/* Grammar: expr = expr {relop expr} */
 Value eval_expr(void) {
+    Value v = eval_expr1();
+    if (v.type == TYPE_ERROR) return v; // propagate error
+    Value res = v;
+    while (tok_type == tokEq || tok_type == tokNe || tok_type == tokLt || tok_type == tokLe || tok_type == tokGt || tok_type == tokGe) {
+        TokenType op = tok_type;
+        get_token();  // skip operator
+        Value v2 = eval_expr1();
+
+        if (v2.type == TYPE_ERROR) return v2; // propagate error
+
+        if (v.type == TYPE_NULL && v2.type == TYPE_NULL) {
+            res = make_num(1); // nulls are equal            
+        }
+        else {
+            int cmp = 0;
+            if (is_str_value(v) && is_str_value(v2)) {
+                cmp = strcmp(v.str, v2.str);
+            }
+            else {
+                float n1 = (v.type == TYPE_NUM ? v.num : v.str ? strtof(v.str, NULL) : 0);
+                float n2 = (v2.type == TYPE_NUM ? v2.num : v2.str ? strtof(v2.str, NULL) : 0);
+                cmp = (n1 < n2 ? -1 : (n1 > n2 ? 1 : 0));
+            }
+            switch (op) {
+                case tokEq:
+                    res = make_num((float)(cmp == 0));
+                    break;
+                case tokNe:
+                    res = make_num((float)(cmp != 0));
+                    break;
+                case tokLt:
+                    res = make_num((float)(cmp < 0));
+                    break;
+                case tokLe:
+                    res = make_num((float)(cmp <= 0));
+                    break;
+                case tokGt:
+                    res = make_num((float)(cmp > 0));
+                    break;
+                case tokGe:
+                    res = make_num((float)(cmp >= 0));
+                    break;
+            }
+        }
+        free_val(&v); free_val(&v2);
+        v = res;  // continue with the result
+    }
+    return res;
+}
+
+/* Grammar: expr = term {(+|-) term} */
+Value eval_expr1(void) {
     Value v = eval_term();
     if (v.type == TYPE_ERROR) return v; // propagate error
     Value res = v;
@@ -831,15 +1021,15 @@ Value eval_expr(void) {
         get_token();  // skip operator
         Value v2 = eval_term();
         if (v2.type == TYPE_ERROR) return v2; // propagate error
-        if (op == tokPlus && (v.type == TYPE_STR || v2.type == TYPE_STR)) {
+        if (op == tokPlus && (is_str_value(v) || is_str_value(v2))) {
             char buf[CELL_W] = { 0 }, tmp1[CELL_W] = { 0 }, tmp2[CELL_W] = { 0 };
             
-            if (v.type == TYPE_STR) {
+            if (is_str_value(v)) {
                 if (v.str) strncpy(tmp1, v.str, CELL_W);
             }
             else sprintf(tmp1, "%g", v.num);
 
-            if (v2.type == TYPE_STR) {
+            if (is_str_value(v2)) {
                 if (v2.str) strncpy(tmp2, v2.str, CELL_W);
             }
             else sprintf(tmp2, "%g", v2.num);
@@ -859,7 +1049,7 @@ Value eval_expr(void) {
                     break;
             }
         }
-        free_val(v); free_val(v2);
+        free_val(&v); free_val(&v2);
         v = res;  // continue with the result
     }
     return res;
@@ -894,7 +1084,7 @@ Value eval_term(void) {
                     res = make_num(fmodf(n1, n2));
                 break;
         }
-        free_val(v); free_val(v2);
+        free_val(&v); free_val(&v2);
         v = res;  // continue with the result
     }
     return res;
@@ -969,33 +1159,61 @@ Value eval_factor(void) {
 
         case tokScalarFunc: {
             get_token();  // skip function name
+            Function* local_function = current_function;
 
             if (!expect_token(tokLParen)) {
                 v = errExprExpectLParen;
                 break;
             }
 
-            Value arg = eval_expr();
-            if (arg.type == TYPE_ERROR) {
-                v = arg;  // propagate error
+            Value args[MAX_FUNC_ARGS];
+            memset(args, 0, sizeof(args));
+
+            int arg_count = 0;
+            while (arg_count < MAX_FUNC_ARGS) {
+                Value arg = eval_expr();
+                if (arg.type == TYPE_ERROR) {
+                    v = arg;  // error to propagate
+                    break;
+                }
+                args[arg_count++] = arg;
+
+                if (tok_type != tokComma) break;
+                get_token(); // skip comma                
+            }
+
+            if (arg_count < local_function->min_args || arg_count > local_function->max_args) {
+                v = errInvalidArg; // invalid number of arguments
                 break;
             }
 
-            if (arg.type != TYPE_NUM) {
-                v = errExprExpectNumeric;
-                free_val(arg);
-                break;
+
+            if (v.type == TYPE_ERROR) {
+                break; // propagate error
             }
 
-            v = current_function->pfn_eval(&arg);
+            v = local_function->pfn_eval(args);
 
             if (!expect_token(tokRParen)) {
                 v = v = errExprExpectRParen;
                 break;
             }
-        }
+        } 
+        break;
+        
+        case tokString:
+            v = make_str(token);
+            if (v.str == NULL) {
+                v = errOutOfMemory; // handle memory allocation failure
+            }
+            get_token();  // skip string
+        break;
 
+        default:
+            v = errExprInvalid; // unexpected token
+            break;
     }
+
     if (negative) {
         if (v.type == TYPE_NUM) {
             v.num = -v.num;
@@ -1014,11 +1232,14 @@ void eval_cell(Cell* c) {
         return;
     }
 
-    free_val(c->cached);
+    free_val(&c->cached);
     if (!(c->flags & FLG_FORMULA)) {
         if (c->content) {
             c->cached.type = TYPE_TEXT;
-            c->cached.str = c->content;
+            if (*c->content == '\'')
+                c->cached.str = c->content + 1; // skip leading quote
+            else                            
+                c->cached.str = c->content;
         }
         else {
             c->cached.type = TYPE_NULL;
@@ -1040,7 +1261,8 @@ void eval_cell(Cell* c) {
             Value v = parse_expr(c->content + 1);
 
             c->cached.type = v.type;
-            if (v.type == TYPE_STR) {
+          
+            if (v.type == TYPE_STR) { // DO NOT USE is_str_value, it checks for TYPE_TEXT
                 c->cached.str = v.str ? strdup(v.str) : NULL;
             }
             else {
@@ -1139,7 +1361,9 @@ void print_cell(int col, int row) MYCC {
             prints(ln);
         }
         else if (v.str) {
-            int i = sprintf(ln, "%*s", CELL_W, v.str);
+            int skip_first = 0;
+            if (*v.str == '\'') skip_first = 1;
+            int i = sprintf(ln, "%*s", CELL_W, v.str+skip_first);
             if (i >= CELL_W) {
                 ln[CELL_W] = 0; // truncate to fit
             }
@@ -1155,7 +1379,6 @@ void print_cell(int col, int row) MYCC {
 
 #define HOTKEY_ITEM_WIDTH 12
 #define HOTKEY_ITEMS_PER_LINE (int)(SCREEN_WIDTH / HOTKEY_ITEM_WIDTH)
-#define VERSION "0.1"
 
 void sheet_print_hotkey(const char* short_cut_key, const char* description) MYCC {
     int len = HOTKEY_ITEM_WIDTH - (strlen(short_cut_key) + strlen(description));
@@ -1187,8 +1410,8 @@ void sheet_update_filename(void) MYCC {
 }
 
 const char* get_filename(const char* path) MYCC {
-    char* s = &path[0];
-    char* p = s + strlen(path);
+    const char* s = &path[0];
+    const char* p = s + strlen(path);
     while (p > s && *(p - 1) != '/' && *(p - 1) != '\\') --p;
     return p;
 }
@@ -1266,7 +1489,7 @@ void do_load(const char* filepath) MYCC {
 CommandAction sheet_save(void) MYCC {
     set_cursor_pos(0, INPUT_LINE_ROW);
     
-    char* p = get_filename(filename);
+    const char* p = get_filename(filename);
     if (!edit_line("File name", NULL, p, 250))
         return COMMAND_ACTION_CANCEL;
 
@@ -1421,6 +1644,7 @@ void move_down(void) {
 
 
 int main(int argc, char* argv[]) {
+    errInvalidArg.str = "Invalid argument";
     errExprInvalid.str = "Invalid expression";
     errExprDivZero.str = "Division by zero";
     errExprCyclicRef.str = "Cyclic reference";
@@ -1500,4 +1724,3 @@ int main(int argc, char* argv[]) {
 
     return 0;
 }
-

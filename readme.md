@@ -45,6 +45,7 @@ Data entry works like a traditional spreadsheet. Navigate to the desired cell an
 * Numeric entries are treated as numbers.
 * All other entries are treated as text.
 * To enter a formula, start the entry with an `=`.
+* To force text entry even for numeric values start the entry with an `'`
 
 To edit the contents of a cell, press `Enter` or the `Edit` key. While editing, you can cancel the operation by pressing `Edit`. 
 
@@ -79,7 +80,7 @@ Add all values in A1, A2, B1 and B2
 | `MAX` | Return the **largest** numeric value in a range: =min(A1:B3) |
 
 ### Simple functions
-These take numeric literals of cell references.
+These take numeric, string literals or cell references to either type.
 
 ### Example
 
@@ -90,6 +91,16 @@ Sine of 2.3 radian
 Sine of the value in A1
 
 `=sin(A1)` 
+
+Convert a decimal value to binary string
+
+`dec2bin(23)`
+`dec2bin(A1)`
+
+Convert a binary string to a decimal value
+
+`bin2dec("1101")`
+`bin2dec(A1)`
 
 |Function|Description|
 |--------|-----------|
@@ -109,3 +120,30 @@ Sine of the value in A1
 | `LOG` | Natural logarithm |
 | `LOG10` | Logarithm base 10 |
 | `LOG2` | Logarithm base 2 |
+| `DEC2BIN` | Decimal value to binary string |
+| `BIN2DEC` | Binary string to a decimal value |
+| `DEC2HEX` | Decimal value to hexadecimal string |
+| `HEX2DEC` | Hexadecimal string to a decimal value |
+
+### Complex function
+Complex functions take more than one argument.
+
+### Example
+
+If the value in A1 > 4 return the string `True` else return the string `False`
+
+`if(A1 > 4, "True", "False")`
+
+|Function|Description|
+|--------|-----------|
+| `IF` | Select a value based on a conditional expression |
+
+## Expression
+
+### Operators
+| Operator | Description |
+|----------|------------|
+| `(` `)`  | Parenthesis used to adjust the precedence of a sub-expression |
+| `*`,`/`,`%` | Multiple, Divide, Modulo |
+| `+`, `-` | Add, Subtract. Addition can be used to concatenate strings |
+| `=`, `<>`, '<',`<=`,`>`,`>=` | Relational operators |
