@@ -6,12 +6,12 @@ TARGET = +zxn
 ZCC     = zcc
 ASM     = z80asm
 
-MAX_ALLOCS = 200000
+MAX_ALLOCS = 200
 CFLAGS = --list -m -c -clib=sdcc_iy -SO3 -opt-code-size --max-allocs-per-node$(MAX_ALLOCS) -pragma-include:zpragma.inc
 AFLAGS =
 LFLAGS = --list -m -lm -startup=31 -clib=sdcc_iy -SO3 -subtype=dotn -opt-code-size --max-allocs-per-node$(MAX_ALLOCS) -pragma-include:zpragma.inc -create-app
 
-SOURCES = platform.c crtio.c crtio_s.s main.c 
+SOURCES = platform.c crtio.c crtio_s.asm main.c 
 
 OBJFILES = $(patsubst %.c,$(OUTPUT_DIR)/%.o,$(SOURCES))
 
