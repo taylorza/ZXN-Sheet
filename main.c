@@ -1153,10 +1153,18 @@ Value eval_factor(void) {
             const char* ref = &token[0];
             parse_cellref(&ref, &cc, &rr);
             Cell* c = find_cell(cc, rr);
-                if (c) {
-                    eval_cell(c);
+            if (c) {
+                eval_cell(c);
+                if (c->cached.type == TYPE_STR) {
+                    v = make_str(c->cached.str);
+                    if (c->cached.str != NULL && v.str == NULL) {
+                        v = errOutOfMemory;
+                    }
+                }
+                else {
                     v = c->cached;
                 }
+            }
             get_token();  // skip cell reference            
         }
                        break;
@@ -1294,14 +1302,7 @@ void eval_cell(Cell* c) {
     }
     else {
         Value v = parse_expr(c->content + 1);
-
-        c->cached.type = v.type;
-        if (v.type == TYPE_STR) { // DO NOT USE is_str_value, it checks for TYPE_TEXT
-            c->cached.str = v.str ? strdup(v.str) : NULL;
-        }
-        else {
-            c->cached = v; // propagate non-allocated value
-        }
+        c->cached = v; // takes ownership of TYPE_STR allocations returned by parser
     }
 
     c->flags &= MSK_VISITING; // reset visiting
