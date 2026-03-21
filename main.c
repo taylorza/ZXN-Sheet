@@ -938,6 +938,7 @@ Value process_range(
 /* Assignment: text may be formula, pure-number, or string */
 void set_cell(int c, int r, const char* s) {
     Cell* p = find_cell(c, r);
+    char* txtbuf = NULL;
     if (!p && (!s || !*s)) return; // no cell, no text -> nothing to do
 
     if (!p) {
@@ -952,15 +953,29 @@ void set_cell(int c, int r, const char* s) {
         free(p->content);
         p->content = NULL;
     }
-    
-    char* txt = (char*)s;
-    if (txt) txt = trim(txt);
+
+    char* txt = NULL;
+    if (s) {
+        txtbuf = strdup(s);
+        if (txtbuf == NULL) {
+            error(errOutOfMemory.str);
+
+            free_val(&p->cached);
+            p->content = NULL;
+            p->flags = 0;
+            remove_deps(p);
+            return;
+        }
+        txt = trim(txtbuf);
+    }
+
     if (!txt || !*txt) {
         free_val(&p->cached);
         p->content = NULL;
         p->flags = 0;
-        
+
         remove_deps(p);
+        free(txtbuf);
         goto reevaluate;
     }
 
@@ -975,6 +990,7 @@ void set_cell(int c, int r, const char* s) {
             p->content = NULL;
             p->flags = 0;
             remove_deps(p);
+            free(txtbuf);
             return;
         }
     }
@@ -989,6 +1005,7 @@ void set_cell(int c, int r, const char* s) {
             p->content = NULL;
             p->flags = 0;
             remove_deps(p);
+            free(txtbuf);
             return;
         }
     }
@@ -1006,9 +1023,10 @@ void set_cell(int c, int r, const char* s) {
                 p->content = NULL;
                 p->flags = 0;
                 remove_deps(p);
+                free(txtbuf);
                 return;
             }
-            sprintf(p->content, "=%s", txt);
+            snprintf(p->content, strlen(txt) + 2, "=%s", txt);
         }
         else {
             /* string */
@@ -1021,10 +1039,14 @@ void set_cell(int c, int r, const char* s) {
                 p->content = NULL;
                 p->flags = 0;
                 remove_deps(p);
+                free(txtbuf);
                 return;
             }            
         }
     }
+
+    free(txtbuf);
+
     /* rebuild dependencies */
     remove_deps(p);
     if (p->flags & FLG_FORMULA) {

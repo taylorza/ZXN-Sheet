@@ -35,13 +35,43 @@ const char* get_lfn(const char* filepath) {
     cat.cat_sz = 2;
     
     if (esx_dos_catalog(&cat) == 1) {
+        char lfn_name[251];
+        const char* sep1;
+        const char* sep2;
+        const char* sep;
+        size_t dir_len;
+
         lfn.cat = &cat;
         esx_ide_get_lfn(&lfn, &cat.cat[1]);
-        char *p = filepath + strlen(filepath);
-        while (p > filepath && *(p - 1) != '/' && *(p - 1) != '\\') --p;
-        strcpy(p, filename);            
+
+        strncpy(lfn_name, filename, sizeof(lfn_name) - 1);
+        lfn_name[sizeof(lfn_name) - 1] = 0;
+
+        sep1 = strrchr(filepath, '/');
+        sep2 = strrchr(filepath, '\\');
+        sep = sep1;
+        if (sep2 && (!sep || sep2 > sep)) {
+            sep = sep2;
+        }
+
+        dir_len = sep ? (size_t)(sep - filepath + 1) : 0;
+        if (dir_len > 250) {
+            dir_len = 250;
+        }
+
+        if (dir_len > 0) {
+            memcpy(filename, filepath, dir_len);
+        }
+        filename[dir_len] = 0;
+
+        strncat(filename, lfn_name, 250 - dir_len);
+        filename[250] = 0;
+
+        return &filename[0];
     }
+
     strncpy(filename, filepath, 250);
+    filename[250] = 0;
     return &filename[0];
 }
 
