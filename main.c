@@ -728,7 +728,7 @@ Value floor_eval(void* state) {
 Value round_eval(void* state) {
     Value arg = *(Value*)state;
     if (arg.type != TYPE_NUM) return errExprExpectNumeric;
-    Value v = make_num((float)(int)(arg.num + 0.5));
+    Value v = make_num(arg.num >= 0 ? floorf(arg.num + 0.5f) : ceilf(arg.num - 0.5f));
     return v;
 }
 Value trunc_eval(void* state) {
