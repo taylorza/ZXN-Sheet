@@ -536,7 +536,7 @@ void add_dep(Cell* owner, Cell* dep) {
     }
     d->cell = dep; d->next = owner->deps; owner->deps = d;
     Dep* r = malloc(sizeof * r);
-    if (d == NULL) {
+    if (r == NULL) {
         error(errOutOfMemory.str);
         return;
     }
@@ -790,7 +790,7 @@ Value dec2hex_eval(void* state) {
 Value hex2dec_eval(void* state) {
     Value arg = *(Value*)state;
     char* endptr;
-    if (is_str_value(arg)) return errInvalidArg;
+    if (!is_str_value(arg)) return errInvalidArg;
     int n = (int)strtol(arg.str, &endptr, 16);
 
     if (*endptr != '\0') return errExprInvalid;
@@ -1222,7 +1222,7 @@ Value eval_factor(void) {
     return v;
 }
 
-// Evaluate cell and its dependencies, caching the result
+// Evaluate cell and its dependencies, caching the result (lazy for reverse deps)
 void eval_cell(Cell* c) {
     if (!c) {
         return;
@@ -1232,53 +1232,50 @@ void eval_cell(Cell* c) {
         return;
     }
 
+    if (c->flags & FLG_VISITING) {
+        // cycle detected
+        c->cached = errExprCyclicRef;
+        c->flags &= MSK_DIRTY; // keep dirty for caller to handle if needed
+        return;
+    }
+
+    c->flags |= FLG_VISITING;
+
+    if (c->deps) {
+        // ensure all dependencies are evaluated first
+        for (Dep* d = c->deps; d; d = d->next) {
+            eval_cell(d->cell);
+        }
+    }
+
     free_val(&c->cached);
+
     if (!(c->flags & FLG_FORMULA)) {
         if (c->content) {
             c->cached.type = TYPE_TEXT;
             if (*c->content == '\'')
                 c->cached.str = c->content + 1; // skip leading quote
-            else                            
+            else
                 c->cached.str = c->content;
         }
         else {
             c->cached.type = TYPE_NULL;
         }
     }
-    else if (c->flags & FLG_VISITING) {
-        c->cached = errExprCyclicRef;
-    }
     else {
-        c->flags |= FLG_VISITING;
-        if (c->deps) {
-            // ensure all dependencies are evaluated
-            for (Dep* d = c->deps; d; d = d->next) {                
-                eval_cell(d->cell);
-            }
+        Value v = parse_expr(c->content + 1);
+
+        c->cached.type = v.type;
+        if (v.type == TYPE_STR) { // DO NOT USE is_str_value, it checks for TYPE_TEXT
+            c->cached.str = v.str ? strdup(v.str) : NULL;
         }
-
-        if (c->flags & FLG_DIRTY) {
-            Value v = parse_expr(c->content + 1);
-
-            c->cached.type = v.type;
-          
-            if (v.type == TYPE_STR) { // DO NOT USE is_str_value, it checks for TYPE_TEXT
-                c->cached.str = v.str ? strdup(v.str) : NULL;
-            }
-            else {
-                c->cached = v; // propagate non-allocated value
-            }
-        }
-        c->flags &= MSK_VISITING; // reset visiting flag
-    }
-    c->flags &= (MSK_DIRTY & MSK_VISITING);
-
-    if (c->revdeps) {
-        // ensure all reverse dependencies are evaluated
-        for (Dep* d = c->revdeps; d; d = d->next) {
-            eval_cell(d->cell);
+        else {
+            c->cached = v; // propagate non-allocated value
         }
     }
+
+    c->flags &= MSK_VISITING; // reset visiting
+    c->flags &= MSK_DIRTY; // mark evaluated
 }
 
 typedef enum CommandAction {
@@ -1345,6 +1342,10 @@ void print_cell(int col, int row) MYCC {
         standard();
     }
     Cell* c = find_cell(col, row);
+    if (c) {
+        eval_cell(c);  // lazy update on render path
+    }
+
     if (c && c->content) {
         Value v = c->cached;
         if (v.type == TYPE_ERROR) {
