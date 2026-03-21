@@ -11,6 +11,7 @@
 #include <math.h>
 #include <stdarg.h>
 #include <errno.h>
+#include <limits.h>
 
 #include "platform.h"
 #include "crtio.h"
@@ -303,6 +304,8 @@ uint8_t parse_int_base(const char* s, int base, int* out) {
 
         if (digit >= base) return 0;
 
+        if (value > (INT_MAX - digit) / base) return 0;
+
         value = value * base + digit;
         ++digits;
         ++s;
@@ -330,6 +333,7 @@ uint8_t is_cellref(const char* s) {
     if (!isdigit((unsigned char)*s)) return 0;
     while (isdigit((unsigned char)*s)) {
         n = n * 10 + (*s - '0');
+        if (n > MAX_ROWS) return 0; // prevent overflow on 16-bit int
         ++s;
     }
     if (n < 1 || n > MAX_ROWS) return 0;
@@ -637,15 +641,36 @@ Value eval_term(void);
 Value eval_factor(void);
 
 void parse_cellref(const char** sp, int* col, int* row) {
-    char ref[8] = { 0 };
-    int i = 0;
-    if (isalpha((unsigned char)**sp)) {
-        ref[i++] = toupper((unsigned char)*(*sp)++);
-        while (isdigit((unsigned char)**sp) && i < 7) ref[i++] = *(*sp)++;
+    *col = -1;
+    *row = -1;
+
+    if (!isalpha((unsigned char)**sp)) {
+        return;
     }
-    ref[i] = 0;
-    *col = ref[0] - 'A';
-    *row = atoi(ref + 1) - 1;
+
+    int parsed_col = toupper((unsigned char)*(*sp)++) - 'A';
+    int parsed_row = 0;
+    int has_digit = 0;
+
+    while (isdigit((unsigned char)**sp)) {
+        has_digit = 1;
+        int digit = *(*sp)++ - '0';
+        if (parsed_row > (MAX_ROWS - digit) / 10) {
+            parsed_row = MAX_ROWS + 1;
+            while (isdigit((unsigned char)**sp)) {
+                (*sp)++;
+            }
+            break;
+        }
+        parsed_row = parsed_row * 10 + digit;
+    }
+
+    if (!has_digit || parsed_col < 0 || parsed_col >= MAX_COLS || parsed_row < 1 || parsed_row > MAX_ROWS) {
+        return;
+    }
+
+    *col = parsed_col;
+    *row = parsed_row - 1;
 }
 
 void parse_range(const char** sp, int* from_col, int* from_row, int* to_col, int* to_row) {
@@ -1544,7 +1569,7 @@ void sheet_show_hotkeys(void) MYCC {
 void sheet_update_filename(void) MYCC {
     set_cursor_pos(0, SCREEN_HEIGHT - 1);
     highlight();
-    char offs = 0;
+    int offs = 0;
     char ellipsis[] = "...";
     char empty[] = "";
     char untitled[] = "Untitled";
@@ -1620,10 +1645,9 @@ int do_save(void) MYCC {
 
 void do_load(const char* filepath) MYCC {
     status("Loading...");
-    errno = 0;
     void* f = open_file(filepath);
-    
-    if (!errno) {
+
+    if (f != NULL) {
         int bytes = read_file(f, tmpbuffer, sizeof(tmpbuffer));
         int pos = 0;
         while (bytes > 0) {
@@ -1690,6 +1714,7 @@ void do_load(const char* filepath) MYCC {
 
         close_file(f);
     }
+
     is_dirty = 0; // clear dirty flag
     strncpy(filename, filepath, 250);
     filename[250] = 0;
