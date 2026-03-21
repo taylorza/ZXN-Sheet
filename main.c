@@ -1474,14 +1474,25 @@ void do_load(const char* filepath) MYCC {
                         ln[pos] = 0; // terminate line
                         pos = 0; // reset position for next line
                         char* p = ln;
-                        char col_ref;
-                        int col = -1, row = -1;
-                        char* content = NULL;
-                        if (sscanf(p, "%c%d:%s", &col_ref, &row, ln) == 3) {
-                            col = col_ref - 'A'; // convert to zero-based index
-                            row--;               // convert to zero-based index
-                            if (col >= 0 && col < MAX_COLS && row >= 0 && row < MAX_ROWS) {
-                                set_cell(col, row, ln);
+                        char* sep = strchr(p, ':');
+
+                        if (sep && sep > p + 1 && isalpha((unsigned char)p[0])) {
+                            int valid_row = 1;
+                            for (char* rp = p + 1; rp < sep; ++rp) {
+                                if (!isdigit((unsigned char)*rp)) {
+                                    valid_row = 0;
+                                    break;
+                                }
+                            }
+
+                            if (valid_row) {
+                                int col = toupper((unsigned char)p[0]) - 'A';
+                                int row = atoi(p + 1) - 1; // convert to zero-based index
+                                char* content = sep + 1;
+
+                                if (col >= 0 && col < MAX_COLS && row >= 0 && row < MAX_ROWS) {
+                                    set_cell(col, row, content);
+                                }
                             }
                         }
                     }
