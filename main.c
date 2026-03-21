@@ -1423,19 +1423,16 @@ void print_cell(int col, int row) MYCC {
             }
         }
         else if (v.type == TYPE_NUM) {
-            int i = sprintf(ln, "%*g", CELL_W, v.num);
-            if (i > CELL_W) {
-                sprintf(ln, "%*.5g", CELL_W, v.num);
+            int written = snprintf(ln, sizeof(ln), "%*g", CELL_W, v.num);
+            if (written < 0 || written > CELL_W) {
+                snprintf(ln, sizeof(ln), "%*.5g", CELL_W, v.num);
             }
             prints(ln);
         }
         else if (v.str) {
             int skip_first = 0;
             if (*v.str == '\'') skip_first = 1;
-            int i = sprintf(ln, "%*s", CELL_W, v.str+skip_first);
-            if (i >= CELL_W) {
-                ln[CELL_W] = 0; // truncate to fit
-            }
+            snprintf(ln, sizeof(ln), "%*.*s", CELL_W, CELL_W, v.str + skip_first);
             prints(ln);         
         }
         else
@@ -1487,8 +1484,10 @@ const char* get_filename(const char* path) MYCC {
 
 int do_save(void) MYCC {
     status("Saving...");
-    strcpy(tmpbuffer, e_filename);
-    strcat(tmpbuffer, ".tmp");
+    int tmpname_len = snprintf(tmpbuffer, sizeof(tmpbuffer), "%s.tmp", e_filename ? e_filename : "");
+    if (tmpname_len < 0 || tmpname_len >= (int)sizeof(tmpbuffer)) {
+        return EINVAL;
+    }
 
     errno = 0;
     void* f = create_file(tmpbuffer);
@@ -1846,5 +1845,4 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    return 0;
 }
