@@ -903,6 +903,10 @@ void set_cell(int c, int r, const char* s) {
     if (*txt == '=') {
         p->flags |= FLG_FORMULA;
         p->content = strdup(txt);
+        if (p->content == NULL) {
+            error(errOutOfMemory.str);
+            return;
+        }
     }
     else if (*txt =='\'') {
         /* string literal */
