@@ -438,11 +438,19 @@ void free_val(Value *v) {
 
 // Trim leading/trailing space
 char* trim(char* s) {
-    char* p = s + strlen(s) - 1;
-    while (p >= s && isspace(*p)) *p-- = 0;
-    p = s;
-    while (*p && isspace(*p)) p++;
-    return p;
+    if (!s) return NULL;
+
+    while (*s && isspace((unsigned char)*s)) {
+        ++s;
+    }
+
+    char* end = s + strlen(s);
+    while (end > s && isspace((unsigned char)*(end - 1))) {
+        --end;
+    }
+    *end = 0;
+
+    return s;
 }
 
 Cell* new_cell(int c, int r) {
