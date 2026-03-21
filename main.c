@@ -58,7 +58,7 @@ typedef struct Value {
     ValType type;
     union {
         float  num;
-        char* str;     // allocated if TYPE_STR, not allocated if TYPE_TEXT or TYPE_ERROR
+        const char* str;     // allocated if TYPE_STR, not allocated if TYPE_TEXT or TYPE_ERROR
     };
 } Value;
 
@@ -234,7 +234,10 @@ void error(const char* fmt, ...) {
     get_cursor_pos(&ox, &oy);
     va_list args;
     va_start(args, fmt);
-    vsnprintf(ln, sizeof(ln), fmt, args);
+    char fmtbuf[80];
+    strncpy(fmtbuf, fmt ? fmt : "", sizeof(fmtbuf) - 1);
+    fmtbuf[sizeof(fmtbuf) - 1] = 0;
+    vsnprintf(ln, sizeof(ln), fmtbuf, args);
     va_end(args);
     set_cursor_pos(0, STATUS_LINE_ROW);
     prints(ln); clreol();
@@ -245,15 +248,70 @@ void error(const char* fmt, ...) {
 
 void status(const char* fmt, ...) {
     uint8_t ox, oy;
-    
+
     get_cursor_pos(&ox, &oy);
     va_list args;
     va_start(args, fmt);
-    vsnprintf(ln, sizeof(ln), fmt, args);
+    char fmtbuf[80];
+    strncpy(fmtbuf, fmt ? fmt : "", sizeof(fmtbuf) - 1);
+    fmtbuf[sizeof(fmtbuf) - 1] = 0;
+    vsnprintf(ln, sizeof(ln), fmtbuf, args);
     va_end(args);
     set_cursor_pos(0, STATUS_LINE_ROW);
     prints(ln); clreol();
     set_cursor_pos(ox, oy);
+}
+
+float value_to_num(Value v) {
+    if (v.type == TYPE_NUM) return v.num;
+    if (!v.str) return 0;
+
+    char numbuf[80];
+    strncpy(numbuf, v.str, sizeof(numbuf) - 1);
+    numbuf[sizeof(numbuf) - 1] = 0;
+
+    float parsed = 0;
+    if (sscanf(numbuf, "%f", &parsed) == 1) {
+        return parsed;
+    }
+    return 0;
+}
+
+uint8_t parse_int_base(const char* s, int base, int* out) {
+    if (!s || !*s) return 0;
+
+    int sign = 1;
+    if (*s == '-') {
+        sign = -1;
+        ++s;
+    }
+
+    int value = 0;
+    int digits = 0;
+    while (*s) {
+        char ch = (char)toupper((unsigned char)*s);
+        int digit;
+        if (ch >= '0' && ch <= '9') {
+            digit = ch - '0';
+        }
+        else if (ch >= 'A' && ch <= 'F') {
+            digit = 10 + (ch - 'A');
+        }
+        else {
+            return 0;
+        }
+
+        if (digit >= base) return 0;
+
+        value = value * base + digit;
+        ++digits;
+        ++s;
+    }
+
+    if (digits == 0) return 0;
+
+    *out = value * sign;
+    return 1;
 }
 
 void next_char(void) {
@@ -430,7 +488,7 @@ Value make_str(const char* s) {
 
 void free_val(Value *v) {
     if (v->type == TYPE_STR && v->str) {
-        free(v->str);        
+        free((void*)v->str);
     }
     v->type = TYPE_NULL;
     v->str = NULL;
@@ -786,11 +844,10 @@ Value dec2bin_eval(void* state) {
 
 Value bin2dec_eval(void* state) {
     Value arg = *(Value*)state;
-    char* endptr;
     if (!is_str_value(arg)) return errInvalidArg;
-    int n = (int)strtol(arg.str, &endptr, 2);
 
-    if (*endptr != '\0') return errExprInvalid;
+    int n;
+    if (!parse_int_base(arg.str, 2, &n)) return errExprInvalid;
 
     Value v = make_num((float)n);
     return v;
@@ -808,11 +865,10 @@ Value dec2hex_eval(void* state) {
 
 Value hex2dec_eval(void* state) {
     Value arg = *(Value*)state;
-    char* endptr;
     if (!is_str_value(arg)) return errInvalidArg;
-    int n = (int)strtol(arg.str, &endptr, 16);
 
-    if (*endptr != '\0') return errExprInvalid;
+    int n;
+    if (!parse_int_base(arg.str, 16, &n)) return errExprInvalid;
 
     Value v = make_num((float)n);
     return v;
@@ -1041,8 +1097,8 @@ Value eval_expr(void) {
                 cmp = strcmp(v.str, v2.str);
             }
             else {
-                float n1 = (v.type == TYPE_NUM ? v.num : v.str ? strtof(v.str, NULL) : 0);
-                float n2 = (v2.type == TYPE_NUM ? v2.num : v2.str ? strtof(v2.str, NULL) : 0);
+                float n1 = value_to_num(v);
+                float n2 = value_to_num(v2);
                 cmp = (n1 < n2 ? -1 : (n1 > n2 ? 1 : 0));
             }
             switch (op) {
@@ -1086,21 +1142,21 @@ Value eval_expr1(void) {
             char buf[CELL_W] = { 0 }, tmp1[CELL_W] = { 0 }, tmp2[CELL_W] = { 0 };
             
             if (is_str_value(v)) {
-                if (v.str) strncpy(tmp1, v.str, CELL_W);
+                if (v.str) strncpy(tmp1, v.str, CELL_W - 1);
             }
-            else sprintf(tmp1, "%g", v.num);
+            else snprintf(tmp1, sizeof(tmp1), "%g", v.num);
 
             if (is_str_value(v2)) {
-                if (v2.str) strncpy(tmp2, v2.str, CELL_W);
+                if (v2.str) strncpy(tmp2, v2.str, CELL_W - 1);
             }
-            else sprintf(tmp2, "%g", v2.num);
+            else snprintf(tmp2, sizeof(tmp2), "%g", v2.num);
 
             snprintf(buf, sizeof(buf), "%s%s", tmp1, tmp2);
             res = make_str(buf);
         }
         else {
-            float n1 = (v.type == TYPE_NUM ? v.num : v.str ? strtof(v.str, NULL) : 0);
-            float n2 = (v2.type == TYPE_NUM ? v2.num : v2.str ? strtof(v2.str, NULL) : 0);
+            float n1 = value_to_num(v);
+            float n2 = value_to_num(v2);
             switch (op) {
                 case tokPlus:
                     res = make_num(n1 + n2);
@@ -1126,8 +1182,8 @@ Value eval_term(void) {
         get_token();  // skip operator
         Value v2 = eval_factor();
         if (v2.type == TYPE_ERROR) return v2; // propagate error
-        float n1 = (v.type == TYPE_NUM ? v.num : v.str ? strtof(v.str, NULL) : 0);
-        float n2 = (v2.type == TYPE_NUM ? v2.num : v2.str ? strtof(v2.str, NULL) : 0);
+        float n1 = value_to_num(v);
+        float n2 = value_to_num(v2);
         switch (op) {
             case tokMul:
                 res = make_num(n1 * n2);
@@ -1467,24 +1523,32 @@ void sheet_update_filename(void) MYCC {
     set_cursor_pos(0, SCREEN_HEIGHT - 1);
     highlight();
     char offs = 0;
+    char ellipsis[] = "...";
+    char empty[] = "";
+    char untitled[] = "Untitled";
+    char format[] = "Filename:%s%s%c";
+    char* filepart = e_filename ? e_filename + offs : untitled;
     if (e_filename && strlen(e_filename) >= SCREEN_WIDTH) {
         offs = strlen(e_filename) - SCREEN_WIDTH;
+        filepart = e_filename + offs;
     }
-    print("Filename:%s%s%c", offs ? "..." : "", e_filename ? e_filename + offs : "Untitled", is_dirty ? '*' : ' ');
+    print(format, offs ? ellipsis : empty, filepart, is_dirty ? '*' : ' ');
     standard();
     clreol();
 }
 
-const char* get_filename(const char* path) MYCC {
-    const char* s = &path[0];
-    const char* p = s + strlen(path);
+char* get_filename(char* path) MYCC {
+    char* s = &path[0];
+    char* p = s + strlen(path);
     while (p > s && *(p - 1) != '/' && *(p - 1) != '\\') --p;
     return p;
 }
 
 int do_save(void) MYCC {
     status("Saving...");
-    int tmpname_len = snprintf(tmpbuffer, sizeof(tmpbuffer), "%s.tmp", e_filename ? e_filename : "");
+    char tmpfmt[] = "%s.tmp";
+    char empty[] = "";
+    int tmpname_len = snprintf(tmpbuffer, sizeof(tmpbuffer), tmpfmt, e_filename ? e_filename : empty);
     if (tmpname_len < 0 || tmpname_len >= (int)sizeof(tmpbuffer)) {
         return EINVAL;
     }
@@ -1612,7 +1676,7 @@ void do_load(const char* filepath) MYCC {
 CommandAction sheet_save(void) MYCC {
     set_cursor_pos(0, INPUT_LINE_ROW);
     
-    const char* p = get_filename(filename);
+    char* p = get_filename(filename);
     if (!edit_line("File name", NULL, p, 250))
         return COMMAND_ACTION_CANCEL;
 
@@ -1816,7 +1880,7 @@ int main(int argc, char* argv[]) {
 
                     set_cursor_pos(0, INPUT_LINE_ROW);
                     char prompt[8];
-                    sprintf(prompt, "%c%d", 'A' + ccol, crow + 1);
+                    snprintf(prompt, sizeof(prompt), "%c%d", 'A' + ccol, crow + 1);
                     if (edit_line(prompt, NULL, ln, sizeof(ln) - 8)) {
                         set_cell(ccol, crow, ln);
                         move_down();
