@@ -811,6 +811,13 @@ Value if_eval(void* state) {
         return errExprExpectNumeric;
     }
     Value v = args[args[0].num ? 1 : 2]; // return true or false branch
+    if (v.type == TYPE_STR) {
+        Value copy = make_str(v.str);
+        if (v.str != NULL && copy.str == NULL) {
+            return errOutOfMemory;
+        }
+        return copy;
+    }
     return v;
 }
     
@@ -1196,19 +1203,23 @@ Value eval_factor(void) {
 
             if (arg_count < local_function->min_args || arg_count > local_function->max_args) {
                 v = errInvalidArg; // invalid number of arguments
-                break;
+                goto scalar_cleanup;
             }
 
 
             if (v.type == TYPE_ERROR) {
-                break; // propagate error
+                goto scalar_cleanup; // propagate error
             }
 
             v = local_function->pfn_eval(args);
 
             if (!expect_token(tokRParen)) {
-                v = v = errExprExpectRParen;
-                break;
+                v = errExprExpectRParen;
+            }
+
+scalar_cleanup:
+            for (int i = 0; i < arg_count; i++) {
+                free_val(&args[i]);
             }
         } 
         break;
@@ -1468,8 +1479,7 @@ void do_load(const char* filepath) MYCC {
         int pos = 0;
         while (bytes > 0) {
             for (int i = 0; i < bytes; i++) {
-                if (tmpbuffer[i] == '\n') continue;
-                if (tmpbuffer[i] == '\r') {
+                if (tmpbuffer[i] == '\r' || tmpbuffer[i] == '\n') {
                     if (pos > 0) {
                         ln[pos] = 0; // terminate line
                         pos = 0; // reset position for next line
@@ -1502,6 +1512,33 @@ void do_load(const char* filepath) MYCC {
             }
             bytes = read_file(f, tmpbuffer, sizeof(tmpbuffer));
         }
+
+        if (pos > 0) {
+            ln[pos] = 0; // process last line even without trailing CR/LF
+            char* p = ln;
+            char* sep = strchr(p, ':');
+
+            if (sep && sep > p + 1 && isalpha((unsigned char)p[0])) {
+                int valid_row = 1;
+                for (char* rp = p + 1; rp < sep; ++rp) {
+                    if (!isdigit((unsigned char)*rp)) {
+                        valid_row = 0;
+                        break;
+                    }
+                }
+
+                if (valid_row) {
+                    int col = toupper((unsigned char)p[0]) - 'A';
+                    int row = atoi(p + 1) - 1; // convert to zero-based index
+                    char* content = sep + 1;
+
+                    if (col >= 0 && col < MAX_COLS && row >= 0 && row < MAX_ROWS) {
+                        set_cell(col, row, content);
+                    }
+                }
+            }
+        }
+
         close_file(f);
     }
     is_dirty = 0; // clear dirty flag
