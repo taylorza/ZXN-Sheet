@@ -325,10 +325,10 @@ void parse_range(const char** sp, int* from_col, int* from_row, int* to_col, int
 
 uint8_t is_cellref(const char* s) {
     int n = 0;
-    if (!isalpha(*s)) return 0;
+    if (!isalpha((unsigned char)*s)) return 0;
     ++s;
-    if (!isdigit(*s)) return 0;
-    while (isdigit(*s)) {
+    if (!isdigit((unsigned char)*s)) return 0;
+    while (isdigit((unsigned char)*s)) {
         n = n * 10 + (*s - '0');
         ++s;
     }
@@ -339,16 +339,16 @@ uint8_t is_cellref(const char* s) {
 void get_token(void) {
     tok_type = tokNone;
 
-    while (isspace(ch)) next_char();
+    while (isspace((unsigned char)ch)) next_char();
     if (ch == 0) {
         tok_type = tokEnd;
         return;
     }
-    if (isalpha(ch)) {
+    if (isalpha((unsigned char)ch)) {
         int i = 0;
-        while (isalpha(ch) || isdigit(ch)) {
+        while (isalpha((unsigned char)ch) || isdigit((unsigned char)ch)) {
             if (i < sizeof(token) - 1)
-                token[i++] = toupper(ch);
+                token[i++] = toupper((unsigned char)ch);
             next_char();
         }
         token[i] = 0;
@@ -358,9 +358,9 @@ void get_token(void) {
                 token[i++] = ch; // include ':' in token
                 next_char(); // skip ':'
                 char* s = token + i;
-                while (isalpha(ch) || isdigit(ch)) {
+                while (isalpha((unsigned char)ch) || isdigit((unsigned char)ch)) {
                     if (i < sizeof(token) - 1)
-                        token[i++] = toupper(ch);
+                        token[i++] = toupper((unsigned char)ch);
                     next_char();
                 }
                 token[i] = 0;
@@ -382,9 +382,9 @@ void get_token(void) {
         }
         if (tok_type == tokNone) tok_type = tokError;
     }
-    else if (isdigit(ch)) {
+    else if (isdigit((unsigned char)ch)) {
         int i = 0;
-        while (isdigit(ch)) {
+        while (isdigit((unsigned char)ch)) {
             if (i < sizeof(token) - 1)
                 token[i++] = ch;
             next_char();
@@ -393,7 +393,7 @@ void get_token(void) {
             if (i < sizeof(token) - 1)
                 token[i++] = ch;
             next_char();
-            while (isdigit(ch)) {
+            while (isdigit((unsigned char)ch)) {
                 if (i < sizeof(token) - 1)
                     token[i++] = ch;
                 next_char();
@@ -639,9 +639,9 @@ Value eval_factor(void);
 void parse_cellref(const char** sp, int* col, int* row) {
     char ref[8] = { 0 };
     int i = 0;
-    if (isalpha(**sp)) {
-        ref[i++] = toupper(*(*sp)++);
-        while (isdigit(**sp) && i < 7) ref[i++] = *(*sp)++;
+    if (isalpha((unsigned char)**sp)) {
+        ref[i++] = toupper((unsigned char)*(*sp)++);
+        while (isdigit((unsigned char)**sp) && i < 7) ref[i++] = *(*sp)++;
     }
     ref[i] = 0;
     *col = ref[0] - 'A';
@@ -1691,7 +1691,8 @@ void do_load(const char* filepath) MYCC {
         close_file(f);
     }
     is_dirty = 0; // clear dirty flag
-    strcpy(filename, filepath);
+    strncpy(filename, filepath, 250);
+    filename[250] = 0;
     e_filename = &filename[0];
 }
 
