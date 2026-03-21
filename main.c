@@ -834,6 +834,9 @@ Value process_range(
                 empty.col = cc;
                 empty.row = rr;
             }
+                else {
+                    eval_cell(cell);
+                }
             pfnAccum(state, cell);
         }
     }
@@ -1129,7 +1132,10 @@ Value eval_factor(void) {
             const char* ref = &token[0];
             parse_cellref(&ref, &cc, &rr);
             Cell* c = find_cell(cc, rr);
-            if (c) v = c->cached;
+                if (c) {
+                    eval_cell(c);
+                    v = c->cached;
+                }
             get_token();  // skip cell reference            
         }
                        break;
@@ -1235,7 +1241,6 @@ void eval_cell(Cell* c) {
     if (c->flags & FLG_VISITING) {
         // cycle detected
         c->cached = errExprCyclicRef;
-        c->flags &= MSK_DIRTY; // keep dirty for caller to handle if needed
         return;
     }
 
