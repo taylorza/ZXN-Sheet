@@ -336,7 +336,6 @@ uint8_t is_cellref(const char* s) {
         if (n > MAX_ROWS) return 0; // prevent overflow on 16-bit int
         ++s;
     }
-    if (n < 1 || n > MAX_ROWS) return 0;
     return *s == 0;
 }
 
