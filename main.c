@@ -534,12 +534,18 @@ void add_dep(Cell* owner, Cell* dep) {
         error(errOutOfMemory.str);
         return;
     }
-    d->cell = dep; d->next = owner->deps; owner->deps = d;
+
     Dep* r = malloc(sizeof * r);
     if (r == NULL) {
+        free(d);
         error(errOutOfMemory.str);
         return;
     }
+
+    d->cell = dep;
+    d->next = owner->deps;
+    owner->deps = d;
+
     r->cell = owner; r->next = dep->revdeps; dep->revdeps = r;
 }
 
@@ -834,9 +840,9 @@ Value process_range(
                 empty.col = cc;
                 empty.row = rr;
             }
-                else {
-                    eval_cell(cell);
-                }
+            else {
+                eval_cell(cell);
+            }
             pfnAccum(state, cell);
         }
     }
