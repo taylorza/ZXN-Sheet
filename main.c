@@ -234,7 +234,7 @@ void error(const char* fmt, ...) {
     get_cursor_pos(&ox, &oy);
     va_list args;
     va_start(args, fmt);
-    vsprintf(ln, fmt, args);
+    vsnprintf(ln, sizeof(ln), fmt, args);
     va_end(args);
     set_cursor_pos(0, STATUS_LINE_ROW);
     prints(ln); clreol();
@@ -249,7 +249,7 @@ void status(const char* fmt, ...) {
     get_cursor_pos(&ox, &oy);
     va_list args;
     va_start(args, fmt);
-    vsprintf(ln, fmt, args);
+    vsnprintf(ln, sizeof(ln), fmt, args);
     va_end(args);
     set_cursor_pos(0, STATUS_LINE_ROW);
     prints(ln); clreol();
@@ -537,6 +537,11 @@ void free_cells(void) {
 
 /* Add owner→dependency link both ways */
 void add_dep(Cell* owner, Cell* dep) {
+    if (owner == NULL || dep == NULL) {
+        error(errOutOfMemory.str);
+        return;
+    }
+
     Dep* d = malloc(sizeof * d);
     if (d == NULL) {
         error(errOutOfMemory.str);
@@ -834,6 +839,9 @@ void set_range_dep(void* state, Cell* cell) {
     Cell* root = (Cell*)state;
     if (cell->flags & FLG_EMPTY) {
         cell = new_cell(cell->col, cell->row);
+        if (cell == NULL) {
+            return;
+        }
     }
     add_dep(root, cell);
 }
@@ -886,6 +894,7 @@ void set_cell(int c, int r, const char* s) {
     else if (p->content) {
         if (s && strcmp(p->content, s) == 0) return; // No change -> nothing to do
         free(p->content);
+        p->content = NULL;
     }
     
     char* txt = (char*)s;
@@ -905,6 +914,11 @@ void set_cell(int c, int r, const char* s) {
         p->content = strdup(txt);
         if (p->content == NULL) {
             error(errOutOfMemory.str);
+
+            free_val(&p->cached);
+            p->content = NULL;
+            p->flags = 0;
+            remove_deps(p);
             return;
         }
     }
@@ -914,6 +928,11 @@ void set_cell(int c, int r, const char* s) {
         p->content = strdup(txt);
         if (p->content == NULL) {
             error(errOutOfMemory.str);
+
+            free_val(&p->cached);
+            p->content = NULL;
+            p->flags = 0;
+            remove_deps(p);
             return;
         }
     }
@@ -926,6 +945,11 @@ void set_cell(int c, int r, const char* s) {
             p->content = malloc(strlen(txt) + 2);
             if (!p->content) {
                 error(errOutOfMemory.str);
+
+                free_val(&p->cached);
+                p->content = NULL;
+                p->flags = 0;
+                remove_deps(p);
                 return;
             }
             sprintf(p->content, "=%s", txt);
@@ -936,6 +960,11 @@ void set_cell(int c, int r, const char* s) {
             p->content = strdup(txt);
             if (p->content == NULL) {
                 error(errOutOfMemory.str);
+
+                free_val(&p->cached);
+                p->content = NULL;
+                p->flags = 0;
+                remove_deps(p);
                 return;
             }            
         }
@@ -955,6 +984,10 @@ void set_cell(int c, int r, const char* s) {
                 parse_cellref(&ref, &cc, &rr);
                 Cell* d = find_cell(cc, rr);
                 if (!d) d = new_cell(cc, rr);
+                if (!d) {
+                    error(errOutOfMemory.str);
+                    break;
+                }
                 add_dep(p, d);
             }
             else if (tok_type == tokRange) {
@@ -1466,8 +1499,26 @@ int do_save(void) MYCC {
         while (node) {
             Cell* c = node->cell;
             if (c->content && *c->content) {
-                sprintf(ln, "%c%d:%s\r\n", 'A' + c->col, c->row + 1, c->content);
-                write_file(f, ln, strlen(ln));
+                char prefix[12];
+                int prefix_len = snprintf(prefix, sizeof(prefix), "%c%d:", 'A' + c->col, c->row + 1);
+                if (prefix_len < 0) {
+                    close_file(f);
+                    return EIO;
+                }
+
+                write_file(f, prefix, (size_t)prefix_len);
+                if (errno) {
+                    close_file(f);
+                    return errno;
+                }
+
+                write_file(f, c->content, strlen(c->content));
+                if (errno) {
+                    close_file(f);
+                    return errno;
+                }
+
+                write_file(f, "\r\n", 2);
                 if (errno) {
                     close_file(f);
                     return errno;
