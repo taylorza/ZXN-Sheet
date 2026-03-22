@@ -1,3 +1,9 @@
+2026/03/22 - Version 0.3
+- Performance and robustness improvements
+- Added copy/paste with automatice cell reference updates
+- Anchored cell references. $ anchors row and/or column in a formula (Like Excel)
+- Long strings can span multiple cells
+
 2025/08/19 - Version 0.2a
 - Support for capslock
 

@@ -14,7 +14,7 @@ Load an existing document
 `.sheet myfile.zsc`
 
 * If `myfile.zsc` exists, it will be loaded.
-* If ir does not exist, a new document will be created with that name as the default.
+* If it does not exist, a new document will be created with that name as the default.
 
 `.zsc` is the recommended file extension, but is not enforced by the program.
 
@@ -33,8 +33,10 @@ Activate Extend Mode by pressing the `Extend Mode` key or `CTRL`+`SHIFT` in CSpe
 
 |Key|Description|
 |---|-----------|
-| `↑S` Save | Saves the current document (recommend using `.zsc` file extention) |
+| `↑S` Save | Saves the current document (recommend using `.zsc` file extension) |
 | `↑G` Goto | Moves directly to a specified cell | 
+| `↑C` Copy | Copies the content of the current cell to the clipboard (**single-cell copy only**) | 
+| `↑V` Paste | Pastes the content of the clipboard to the current cell. After pasting, the cursor moves one cell in the **last navigation direction used before paste**. |
 | `↑Q` Quit | Exits the editor. You will be prompted to save if the document has unsaved changes. |
 
 `↑` indicates the Extended Mode modifier (`Extend Mode` key or `CTRL`+`SHIFT`)
@@ -53,13 +55,35 @@ Pressing `Enter` while editing a cell will update the value of the cell to the n
 
 All function names and cell references are case-insensitive ie. `A1` and `a1` both refer to cell `A1` in the sheet.
 
+### Relative, absolute, and mixed references
+
+When pasting a copied formula, references are adjusted relative to the destination cell unless they are fixed with `$`.
+
+| Type | Example | Behavior when pasted |
+|------|---------|----------------------|
+| Relative | `A1` | Row and column both adjust |
+| Absolute | `$A$1` | Row and column are both fixed |
+| Mixed (fixed column) | `$A1` | Column fixed, row adjusts |
+| Mixed (fixed row) | `A$1` | Row fixed, column adjusts |
+
 ### Examples:
+- Copy formula from `A1` to `A2`:
+  - `=B1` becomes `=B2`
+  - `=$B$1` stays `=$B$1`
+  - `=$B1` becomes `=$B2`
+  - `=B$1` stays `=B$1`
+
+> Note: Clipboard operations currently support copying and pasting **one cell at a time**.
+
 |Entry|Description|
 |-----|-----------|
 | `=A1` | References the value in cell A1 |
-| `=A1*2` | Will show a value double that of the value in cell A1 |
+| `=A1*2` | Shows a value double that of cell A1 |
+| `=$A1*2` | Column is absolute; copied across columns it still references column A |
+| `=A$1*2` | Row is absolute; copied across rows it still references row 1 |
+| `=$A$1*2` | Both column and row are absolute |
 
-## Formulas and Function
+## Formulas and Functions
 
 Expressions in formulas use standard precedence rules (BODMAS/PEMDAS) and allow references like `A1`, `B2` etc. 
 
@@ -77,7 +101,7 @@ Add all values in A1, A2, B1 and B2
 | `AVG` | Returns the **average** of numeric values in a range: =avg(A1:B3) |
 | `COUNT` | Returns how many cells contain values in a range: =count(A1:B3) |
 | `MIN` | Returns the **smallest** numeric value in a range: =min(A1:B3) |
-| `MAX` | Return the **largest** numeric value in a range: =min(A1:B3) |
+| `MAX` | Return the **largest** numeric value in a range: =max(A1:B3) |
 
 ### Simple functions
 These take numeric, string literals or cell references to either type.
@@ -94,13 +118,13 @@ Sine of the value in A1
 
 Convert a decimal value to binary string
 
-`dec2bin(23)`
-`dec2bin(A1)`
+`=dec2bin(23)`
+`=dec2bin(A1)`
 
 Convert a binary string to a decimal value
 
-`bin2dec("1101")`
-`bin2dec(A1)`
+`=bin2dec("1101")`
+`=bin2dec(A1)`
 
 |Function|Description|
 |--------|-----------|
@@ -144,6 +168,6 @@ If the value in A1 > 4 return the string `True` else return the string `False`
 | Operator | Description |
 |----------|------------|
 | `(` `)`  | Parenthesis used to adjust the precedence of a sub-expression |
-| `*`,`/`,`%` | Multiple, Divide, Modulo |
+| `*`,`/`,`%` | Multiply, Divide, Modulo |
 | `+`, `-` | Add, Subtract. Addition can be used to concatenate strings |
 | `=`, `<>`, '<',`<=`,`>`,`>=` | Relational operators |
