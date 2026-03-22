@@ -1700,6 +1700,34 @@ int do_save(void) MYCC {
     return errno;
 }
 
+void load_line(char* p) {
+    char* sep = strchr(p, ':');
+
+    if (!(sep && sep > p + 1 && isalpha((unsigned char)p[0]))) {
+        return;
+    }
+
+    int valid_row = 1;
+    for (char* rp = p + 1; rp < sep; ++rp) {
+        if (!isdigit((unsigned char)*rp)) {
+            valid_row = 0;
+            break;
+        }
+    }
+
+    if (!valid_row) {
+        return;
+    }
+
+    int col = toupper((unsigned char)p[0]) - 'A';
+    int row = atoi(p + 1) - 1; // convert to zero-based index
+    char* content = sep + 1;
+
+    if (col >= 0 && col < MAX_COLS && row >= 0 && row < MAX_ROWS) {
+        set_cell(col, row, content);
+    }
+}
+
 void do_load(const char* filepath) MYCC {
     status("Loading...");
     void* f = open_file(filepath);
@@ -1712,29 +1740,8 @@ void do_load(const char* filepath) MYCC {
                 if (tmpbuffer[i] == '\r' || tmpbuffer[i] == '\n') {
                     if (pos > 0) {
                         ln[pos] = 0; // terminate line
+                        load_line(ln);
                         pos = 0; // reset position for next line
-                        char* p = ln;
-                        char* sep = strchr(p, ':');
-
-                        if (sep && sep > p + 1 && isalpha((unsigned char)p[0])) {
-                            int valid_row = 1;
-                            for (char* rp = p + 1; rp < sep; ++rp) {
-                                if (!isdigit((unsigned char)*rp)) {
-                                    valid_row = 0;
-                                    break;
-                                }
-                            }
-
-                            if (valid_row) {
-                                int col = toupper((unsigned char)p[0]) - 'A';
-                                int row = atoi(p + 1) - 1; // convert to zero-based index
-                                char* content = sep + 1;
-
-                                if (col >= 0 && col < MAX_COLS && row >= 0 && row < MAX_ROWS) {
-                                    set_cell(col, row, content);
-                                }
-                            }
-                        }
                     }
                 }
                 else if (pos < sizeof(ln) - 1) // prevent overflow
@@ -1745,28 +1752,7 @@ void do_load(const char* filepath) MYCC {
 
         if (pos > 0) {
             ln[pos] = 0; // process last line even without trailing CR/LF
-            char* p = ln;
-            char* sep = strchr(p, ':');
-
-            if (sep && sep > p + 1 && isalpha((unsigned char)p[0])) {
-                int valid_row = 1;
-                for (char* rp = p + 1; rp < sep; ++rp) {
-                    if (!isdigit((unsigned char)*rp)) {
-                        valid_row = 0;
-                        break;
-                    }
-                }
-
-                if (valid_row) {
-                    int col = toupper((unsigned char)p[0]) - 'A';
-                    int row = atoi(p + 1) - 1; // convert to zero-based index
-                    char* content = sep + 1;
-
-                    if (col >= 0 && col < MAX_COLS && row >= 0 && row < MAX_ROWS) {
-                        set_cell(col, row, content);
-                    }
-                }
-            }
+            load_line(ln);
         }
 
         close_file(f);
@@ -1893,16 +1879,21 @@ void print_view_cell(int realc, int realr) {
 
 /* Print viewport */
 void print_view(void) {
+    static int input_ccol = -1;
+    static int input_crow = -1;
+
     has_error = 0; // reset error flag
     set_cursor_pos(0, 0);
 
-    if (redraw == REDRAW_ALL) {
+    REDRAW_MODE draw_mode = redraw;
+
+    if (draw_mode == REDRAW_ALL) {
         print_col_headers();
         print_row_headers();
-        redraw = REDRAW_CONTENT;
+        draw_mode = REDRAW_CONTENT;
     }
 
-    if (redraw == REDRAW_CONTENT) {
+    if (draw_mode == REDRAW_CONTENT) {
         for (int rr = 0; rr < VIEW_ROWS; rr++) {
             int realr = view_r + rr;
 
@@ -1930,7 +1921,7 @@ void print_view(void) {
             }
         }
     }
-    else if (redraw == REDRAW_CURSOR) {
+    else if (draw_mode == REDRAW_CURSOR) {
         if (prev_ccol >= view_c && prev_ccol < view_c + VIEW_COLS &&
             prev_crow >= view_r && prev_crow < view_r + VIEW_ROWS) {
             print_view_cell(prev_ccol, prev_crow);
@@ -1956,15 +1947,19 @@ void print_view(void) {
         sheet_update_filename();
     }
 
-    set_cursor_pos(0, INPUT_LINE_ROW);
-    highlight();
-    print("%c%d:", 'A' + ccol, crow + 1);
-    Cell* c = find_cell(ccol, crow);
-    if (c && c->content) {
-        prints(c->content);
+    if (draw_mode != REDRAW_CURSOR || ccol != input_ccol || crow != input_crow) {
+        set_cursor_pos(0, INPUT_LINE_ROW);
+        highlight();
+        print("%c%d:", 'A' + ccol, crow + 1);
+        Cell* c = find_cell(ccol, crow);
+        if (c && c->content) {
+            prints(c->content);
+        }
+        standard();
+        clreol();
+        input_ccol = ccol;
+        input_crow = crow;
     }
-    standard();
-    clreol();
 }
 
 void move_cursor(int dc, int dr) {
