@@ -3,6 +3,7 @@
 - Added copy/paste with automatice cell reference updates
 - Anchored cell references. $ anchors row and/or column in a formula (Like Excel)
 - Long strings can span multiple cells
+- Added power '^' operator
 
 2025/08/19 - Version 0.2a
 - Support for capslock

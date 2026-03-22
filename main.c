@@ -90,7 +90,7 @@ typedef struct Dep {
 // One spreadsheet cell
 typedef struct Cell {
     Dep* deps;          // cells this cell references
-    Dep* revdeps;       // cells referemcing this cell
+    Dep* revdeps;       // cells referencing this cell
 
     uint8_t col, row;
     char* content;      // raw text
@@ -141,7 +141,7 @@ typedef enum {
     tokNone,
     tokCellRef, tokRange, tokNumber, tokString, 
     tokEq, tokNe, tokLt, tokLe, tokGt, tokGe, 
-    tokPlus, tokMinus, tokMul, tokDiv, tokMod, tokLParen, tokRParen, tokComma, tokEnd,
+    tokPlus, tokMinus, tokMul, tokDiv, tokMod, tokPow, tokLParen, tokRParen, tokComma, tokEnd,
     tokScalarFunc,
     tokRangeFunc,
 
@@ -488,6 +488,7 @@ void get_token(void) {
             case '*': tok_type = tokMul; next_char(); break;
             case '/': tok_type = tokDiv; next_char(); break;
             case '%': tok_type = tokMod; next_char(); break;
+            case '^': tok_type = tokPow; next_char(); break;
             case '(': tok_type = tokLParen; next_char(); break;
             case ')': tok_type = tokRParen; next_char(); break;
             case ',': tok_type = tokComma; next_char(); break;
@@ -678,6 +679,7 @@ void eval_cell(Cell* c);
 Value eval_expr(void);
 Value eval_expr1(void);
 Value eval_term(void);
+Value eval_power(void);
 Value eval_factor(void);
 
 void parse_cellref(const char** sp, int* col, int* row) {
@@ -1227,15 +1229,15 @@ Value eval_expr1(void) {
     return res;
 }
 
-/* term = factor {(*|/) factor} */
+/* term = power {(*|/) power} */
 Value eval_term(void) {
-    Value v = eval_factor();
+    Value v = eval_power();
     if (v.type == TYPE_ERROR) return v; // propagate error
     Value res = v;
     while (tok_type == tokMul || tok_type == tokDiv || tok_type == tokMod) {
         TokenType op = tok_type;
         get_token();  // skip operator
-        Value v2 = eval_factor();
+        Value v2 = eval_power();
         if (v2.type == TYPE_ERROR) return v2; // propagate error
         float n1 = value_to_num(v);
         float n2 = value_to_num(v2);
@@ -1256,6 +1258,24 @@ Value eval_term(void) {
                     res = make_num(fmodf(n1, n2));
                 break;
         }
+        free_val(&v); free_val(&v2);
+        v = res;  // continue with the result
+    }
+    return res;
+}
+
+/* power = factor {^ factor} */
+Value eval_power(void) {
+    Value v = eval_factor();
+    if (v.type == TYPE_ERROR) return v; // propagate error
+    Value res = v;
+    while (tok_type == tokPow) {
+        get_token();  // skip operator
+        Value v2 = eval_factor();
+        if (v2.type == TYPE_ERROR) return v2; // propagate error
+        float n1 = value_to_num(v);
+        float n2 = value_to_num(v2);
+        res = make_num(powf(n1, n2));
         free_val(&v); free_val(&v2);
         v = res;  // continue with the result
     }
@@ -1592,9 +1612,12 @@ int print_cell(int col, int row, Cell* c) MYCC {
     }
 
     int span_cols = 1;
-    uint8_t is_spanning = 0;
 
-    if (c && c->content) {
+    if (!(c && c->content)) {
+        goto render_empty;
+    }
+
+    {
         Value v = c->cached;
         if (v.type == TYPE_ERROR) {
             print("%*s", CELL_W, "<error>");
@@ -1614,6 +1637,10 @@ int print_cell(int col, int row, Cell* c) MYCC {
             if (*v.str == '\'') skip_first = 1;
             const char* text = v.str + skip_first;
             size_t text_len = strlen(text);
+
+            if (text_len == 0) {
+                goto render_empty;
+            }
 
             if (text_len > CELL_W) {
                 /* Span across empty adjacent cells until edge or occupied cell */
@@ -1640,7 +1667,6 @@ int print_cell(int col, int row, Cell* c) MYCC {
                 }
 
                 span_cols = 1 + extra_cols;
-                is_spanning = 1;
             }
             else {
                 snprintf(ln, sizeof(ln), "%*.*s", CELL_W, CELL_W, text);
@@ -1648,20 +1674,20 @@ int print_cell(int col, int row, Cell* c) MYCC {
             }
         }
         else {
-            clrcell();
-            standard();
-            return span_cols;
+            goto render_empty;
         }
-    }
-    else {
-        clrcell();
-        standard();
-        return span_cols;
     }
 
     putch(' ');
     standard();
     return span_cols;
+
+render_empty:
+    /* Keep empty and evaluated-empty rendering identical */
+        clrcell();
+        standard();
+        putch(' ');
+        return span_cols;
 }
 
 uint8_t get_overlapped_text(int target_col, int row, char* out, int out_size) {

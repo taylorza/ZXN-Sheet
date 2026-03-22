@@ -375,7 +375,7 @@ uint8_t edit_line(const char* prompt, const char* alphabet, char* buffer, uint8_
     while (retval == 255) {
         if (redraw) {
             set_cursor_pos(ex, ey);
-            print(buffer);
+            prints(buffer);
             clreol();
             redraw = 0;
         }

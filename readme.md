@@ -168,6 +168,7 @@ If the value in A1 > 4 return the string `True` else return the string `False`
 | Operator | Description |
 |----------|------------|
 | `(` `)`  | Parenthesis used to adjust the precedence of a sub-expression |
+|`^` | Exponentiation (power) |
 | `*`,`/`,`%` | Multiply, Divide, Modulo |
 | `+`, `-` | Add, Subtract. Addition can be used to concatenate strings |
 | `=`, `<>`, '<',`<=`,`>`,`>=` | Relational operators |
