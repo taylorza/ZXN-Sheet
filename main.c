@@ -1551,9 +1551,7 @@ int print_cell(int col, int row, Cell* c) MYCC {
         return span_cols;
     }
 
-    if (!is_spanning) {
-        putch(' ');
-    }
+    putch(' ');
     standard();
     return span_cols;
 }
