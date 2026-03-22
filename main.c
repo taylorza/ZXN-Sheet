@@ -1598,6 +1598,9 @@ int print_cell(int col, int row, Cell* c) MYCC {
         Value v = c->cached;
         if (v.type == TYPE_ERROR) {
             print("%*s", CELL_W, "<error>");
+            if (col == ccol && row == crow) {
+                error("Error: %s", v.str ? v.str : "Unknown error");
+            }
         }
         else if (v.type == TYPE_NUM) {
             int written = snprintf(ln, sizeof(ln), "%*g", CELL_W, v.num);
