@@ -329,8 +329,11 @@ void parse_range(const char** sp, int* from_col, int* from_row, int* to_col, int
 
 uint8_t is_cellref(const char* s) {
     int n = 0;
+    if (*s == '$') ++s;
     if (!isalpha((unsigned char)*s)) return 0;
+    if ((toupper((unsigned char)*s) - 'A') >= MAX_COLS) return 0;
     ++s;
+    if (*s == '$') ++s;
     if (!isdigit((unsigned char)*s)) return 0;
     while (isdigit((unsigned char)*s)) {
         n = n * 10 + (*s - '0');
@@ -348,9 +351,9 @@ void get_token(void) {
         tok_type = tokEnd;
         return;
     }
-    if (isalpha((unsigned char)ch)) {
+    if (isalpha((unsigned char)ch) || ch == '$') {
         int i = 0;
-        while (isalpha((unsigned char)ch) || isdigit((unsigned char)ch)) {
+        while (isalpha((unsigned char)ch) || isdigit((unsigned char)ch) || ch == '$') {
             if (i < sizeof(token) - 1)
                 token[i++] = toupper((unsigned char)ch);
             next_char();
@@ -362,7 +365,7 @@ void get_token(void) {
                 token[i++] = ch; // include ':' in token
                 next_char(); // skip ':'
                 char* s = token + i;
-                while (isalpha((unsigned char)ch) || isdigit((unsigned char)ch)) {
+                while (isalpha((unsigned char)ch) || isdigit((unsigned char)ch) || ch == '$') {
                     if (i < sizeof(token) - 1)
                         token[i++] = toupper((unsigned char)ch);
                     next_char();
@@ -477,6 +480,9 @@ uint8_t expect_token(TokenType expected) {
 static int view_r = 0, view_c = 0;
 static int ccol = 0, crow = 0;
 static int prev_ccol = 0, prev_crow = 0;
+static char* clipboard_content = NULL;
+static int clipboard_col = -1;
+static int clipboard_row = -1;
 
 /* Helpers for Value */
 Value make_num(float v) {
@@ -623,24 +629,34 @@ Value eval_term(void);
 Value eval_factor(void);
 
 void parse_cellref(const char** sp, int* col, int* row) {
+    const char* p = *sp;
     *col = -1;
     *row = -1;
 
-    if (!isalpha((unsigned char)**sp)) {
+    if (*p == '$') {
+        ++p;
+    }
+
+    if (!isalpha((unsigned char)*p)) {
         return;
     }
 
-    int parsed_col = toupper((unsigned char)*(*sp)++) - 'A';
+    int parsed_col = toupper((unsigned char)*p++) - 'A';
+
+    if (*p == '$') {
+        ++p;
+    }
+
     int parsed_row = 0;
     int has_digit = 0;
 
-    while (isdigit((unsigned char)**sp)) {
+    while (isdigit((unsigned char)*p)) {
         has_digit = 1;
-        int digit = *(*sp)++ - '0';
+        int digit = *p++ - '0';
         if (parsed_row > (MAX_ROWS - digit) / 10) {
             parsed_row = MAX_ROWS + 1;
-            while (isdigit((unsigned char)**sp)) {
-                (*sp)++;
+            while (isdigit((unsigned char)*p)) {
+                p++;
             }
             break;
         }
@@ -651,6 +667,7 @@ void parse_cellref(const char** sp, int* col, int* row) {
         return;
     }
 
+    *sp = p;
     *col = parsed_col;
     *row = parsed_row - 1;
 }
@@ -1437,13 +1454,133 @@ typedef struct {
 CommandAction sheet_save(void) MYCC;
 CommandAction sheet_goto(void) MYCC;
 CommandAction sheet_quit(void) MYCC;
+CommandAction sheet_copy(void) MYCC;
+CommandAction sheet_paste(void) MYCC;
+
+char* translate_formula_for_paste(const char* formula, int dcol, int drow);
 
 Command commands[] = {
     {"^S", "Save", KEY_SAVE, sheet_save},
     {"^G", "Goto", KEY_GOTO, sheet_goto},
+    {"^C", "Copy", KEY_COPY, sheet_copy},
+    {"^V", "Paste", KEY_PASTE, sheet_paste},
     {"^Q", "Quit", KEY_QUIT, sheet_quit},
     {NULL, NULL, 0, NULL}
 };
+
+char* translate_formula_for_paste(const char* formula, int dcol, int drow) {
+    if (!formula) return NULL;
+
+    size_t len = strlen(formula);
+    size_t cap = len * 2 + 16;
+    char* out = malloc(cap);
+    if (!out) {
+        error(errOutOfMemory.str);
+        return NULL;
+    }
+
+    size_t i = 0;
+    size_t j = 0;
+
+    while (i < len) {
+        if (formula[i] == '\'' || formula[i] == '"') {
+            char quote = formula[i];
+            out[j++] = formula[i++];
+            while (i < len) {
+                char current = formula[i++];
+                out[j++] = current;
+                if (current == quote) {
+                    break;
+                }
+            }
+            continue;
+        }
+
+        if ((formula[i] == '$' || isalpha((unsigned char)formula[i])) &&
+            (i == 0 || !(isalpha((unsigned char)formula[i - 1]) ||
+                         isdigit((unsigned char)formula[i - 1]) ||
+                         formula[i - 1] == '$'))) {
+            size_t start = i;
+            int col_anchor = 0;
+            int row_anchor = 0;
+            char col_char = 0;
+            long row_num = 0;
+            size_t row_start = 0;
+            int has_row_digits = 0;
+
+            if (formula[i] == '$') {
+                col_anchor = 1;
+                i++;
+            }
+
+            if (i < len && isalpha((unsigned char)formula[i])) {
+                col_char = (char)toupper((unsigned char)formula[i++]);
+            }
+            else {
+                i = start;
+                out[j++] = formula[i++];
+                continue;
+            }
+
+            if (i < len && formula[i] == '$') {
+                row_anchor = 1;
+                i++;
+            }
+
+            row_start = i;
+            while (i < len && isdigit((unsigned char)formula[i])) {
+                has_row_digits = 1;
+                row_num = row_num * 10 + (formula[i] - '0');
+                i++;
+            }
+
+            if (!has_row_digits) {
+                i = start;
+                out[j++] = formula[i++];
+                continue;
+            }
+
+            if (col_char >= 'A' && col_char <= 'Z' && row_num >= 1) {
+                int new_col = (col_char - 'A');
+                int new_row = ((int)row_num - 1);
+
+                if (!col_anchor) {
+                    new_col += dcol;
+                }
+                if (!row_anchor) {
+                    new_row += drow;
+                }
+
+                if (new_col < 0) new_col = 0;
+                if (new_col >= MAX_COLS) new_col = MAX_COLS - 1;
+                if (new_row < 0) new_row = 0;
+                if (new_row >= MAX_ROWS) new_row = MAX_ROWS - 1;
+
+                if (col_anchor) out[j++] = '$';
+                out[j++] = (char)('A' + new_col);
+                if (row_anchor) out[j++] = '$';
+                j += (size_t)snprintf(out + j, cap - j, "%d", new_row + 1);
+                continue;
+            }
+
+            if (col_anchor) out[j++] = '$';
+            out[j++] = col_char;
+            if (row_anchor) out[j++] = '$';
+            if (row_start < i) {
+                size_t raw_len = i - row_start;
+                if (raw_len > cap - j - 1) raw_len = cap - j - 1;
+                memcpy(out + j, formula + row_start, raw_len);
+                j += raw_len;
+            }
+            continue;
+        }
+
+        out[j++] = formula[i++];
+    }
+
+    out[j] = 0;
+    return out;
+}
 
 CommandAction confirm(const char *prompt) MYCC {
     CommandAction retval;
@@ -1825,6 +1962,63 @@ CommandAction sheet_quit(void) MYCC {
         return COMMAND_ACTION_QUIT;
     }
 
+    return COMMAND_ACTION_NONE;
+}
+
+CommandAction sheet_copy(void) MYCC {
+    Cell* src;
+    char* copied;
+
+    src = find_cell(ccol, crow);
+    if (!src || !src->content || !*src->content) {
+        status("Nothing to copy");
+        return COMMAND_ACTION_NONE;
+    }
+
+    copied = strdup(src->content);
+    if (!copied) {
+        error(errOutOfMemory.str);
+        return COMMAND_ACTION_NONE;
+    }
+
+    free(clipboard_content);
+    clipboard_content = copied;
+    clipboard_col = ccol;
+    clipboard_row = crow;
+    status("Copied %c%d", 'A' + ccol, crow + 1);
+    return COMMAND_ACTION_NONE;
+}
+
+CommandAction sheet_paste(void) MYCC {
+    char* to_write = NULL;
+    int dcol = 0;
+    int drow = 0;
+
+    if (!clipboard_content || clipboard_col < 0 || clipboard_row < 0) {
+        status("Clipboard empty");
+        return COMMAND_ACTION_NONE;
+    }
+
+    if (clipboard_content[0] == '=') {
+        dcol = ccol - clipboard_col;
+        drow = crow - clipboard_row;
+        to_write = translate_formula_for_paste(clipboard_content, dcol, drow);
+    }
+    else {
+        to_write = strdup(clipboard_content);
+        if (!to_write) {
+            error(errOutOfMemory.str);
+            return COMMAND_ACTION_NONE;
+        }
+    }
+
+    if (!to_write) {
+        return COMMAND_ACTION_NONE;
+    }
+
+    set_cell(ccol, crow, to_write);
+    free(to_write);
+    status("Pasted to %c%d", 'A' + ccol, crow + 1);
     return COMMAND_ACTION_NONE;
 }
 
