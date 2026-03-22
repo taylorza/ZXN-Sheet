@@ -16,7 +16,7 @@
 #include "platform.h"
 #include "crtio.h"
 
-#define VERSION "0.2"
+#define VERSION "0.3"
 
 #define MAX_COLS    26
 #define MAX_ROWS    256
@@ -324,23 +324,74 @@ void next_char(void) {
     ++expr;
 }
 
+typedef struct {
+    int col;
+    int row;
+    uint8_t col_anchor;
+    uint8_t row_anchor;
+    size_t len;
+} CellRefInfo;
+
+uint8_t is_cellref_token_char(char c) {
+    return (uint8_t)(isalpha((unsigned char)c) || isdigit((unsigned char)c) || c == '$');
+}
+
+uint8_t scan_cellref(const char* s, CellRefInfo* out) {
+    const char* p = s;
+    int parsed_col;
+    int parsed_row = 0;
+    int has_digit = 0;
+    uint8_t col_anchor = 0;
+    uint8_t row_anchor = 0;
+
+    if (*p == '$') {
+        col_anchor = 1;
+        ++p;
+    }
+
+    if (!isalpha((unsigned char)*p)) {
+        return 0;
+    }
+
+    parsed_col = toupper((unsigned char)*p++) - 'A';
+    if (parsed_col < 0 || parsed_col >= MAX_COLS) {
+        return 0;
+    }
+
+    if (*p == '$') {
+        row_anchor = 1;
+        ++p;
+    }
+
+    while (isdigit((unsigned char)*p)) {
+        int digit = *p++ - '0';
+        has_digit = 1;
+        if (parsed_row > (MAX_ROWS - digit) / 10) {
+            return 0;
+        }
+        parsed_row = parsed_row * 10 + digit;
+    }
+
+    if (!has_digit || parsed_row < 1 || parsed_row > MAX_ROWS) {
+        return 0;
+    }
+
+    if (out) {
+        out->col = parsed_col;
+        out->row = parsed_row - 1;
+        out->col_anchor = col_anchor;
+        out->row_anchor = row_anchor;
+        out->len = (size_t)(p - s);
+    }
+    return 1;
+}
+
 void parse_cellref(const char** sp, int* col, int* row);
 void parse_range(const char** sp, int* from_col, int* from_row, int* to_col, int* to_row);
 
 uint8_t is_cellref(const char* s) {
-    int n = 0;
-    if (*s == '$') ++s;
-    if (!isalpha((unsigned char)*s)) return 0;
-    if ((toupper((unsigned char)*s) - 'A') >= MAX_COLS) return 0;
-    ++s;
-    if (*s == '$') ++s;
-    if (!isdigit((unsigned char)*s)) return 0;
-    while (isdigit((unsigned char)*s)) {
-        n = n * 10 + (*s - '0');
-        if (n > MAX_ROWS) return 0; // prevent overflow on 16-bit int
-        ++s;
-    }
-    return *s == 0;
+    CellRefInfo ref;
+    return scan_cellref(s, &ref) && s[ref.len] == 0;
 }
 
 void get_token(void) {
@@ -353,7 +404,7 @@ void get_token(void) {
     }
     if (isalpha((unsigned char)ch) || ch == '$') {
         int i = 0;
-        while (isalpha((unsigned char)ch) || isdigit((unsigned char)ch) || ch == '$') {
+        while (is_cellref_token_char(ch)) {
             if (i < sizeof(token) - 1)
                 token[i++] = toupper((unsigned char)ch);
             next_char();
@@ -365,7 +416,7 @@ void get_token(void) {
                 token[i++] = ch; // include ':' in token
                 next_char(); // skip ':'
                 char* s = token + i;
-                while (isalpha((unsigned char)ch) || isdigit((unsigned char)ch) || ch == '$') {
+                while (is_cellref_token_char(ch)) {
                     if (i < sizeof(token) - 1)
                         token[i++] = toupper((unsigned char)ch);
                     next_char();
@@ -629,47 +680,17 @@ Value eval_term(void);
 Value eval_factor(void);
 
 void parse_cellref(const char** sp, int* col, int* row) {
-    const char* p = *sp;
+    CellRefInfo ref;
     *col = -1;
     *row = -1;
 
-    if (*p == '$') {
-        ++p;
-    }
-
-    if (!isalpha((unsigned char)*p)) {
+    if (!scan_cellref(*sp, &ref)) {
         return;
     }
 
-    int parsed_col = toupper((unsigned char)*p++) - 'A';
-
-    if (*p == '$') {
-        ++p;
-    }
-
-    int parsed_row = 0;
-    int has_digit = 0;
-
-    while (isdigit((unsigned char)*p)) {
-        has_digit = 1;
-        int digit = *p++ - '0';
-        if (parsed_row > (MAX_ROWS - digit) / 10) {
-            parsed_row = MAX_ROWS + 1;
-            while (isdigit((unsigned char)*p)) {
-                p++;
-            }
-            break;
-        }
-        parsed_row = parsed_row * 10 + digit;
-    }
-
-    if (!has_digit || parsed_col < 0 || parsed_col >= MAX_COLS || parsed_row < 1 || parsed_row > MAX_ROWS) {
-        return;
-    }
-
-    *sp = p;
-    *col = parsed_col;
-    *row = parsed_row - 1;
+    *sp += ref.len;
+    *col = ref.col;
+    *row = ref.row;
 }
 
 void parse_range(const char** sp, int* from_col, int* from_row, int* to_col, int* to_row) {
@@ -1483,6 +1504,8 @@ char* translate_formula_for_paste(const char* formula, int dcol, int drow) {
     size_t j = 0;
 
     while (i < len) {
+        CellRefInfo ref;
+
         if (formula[i] == '\'' || formula[i] == '"') {
             char quote = formula[i];
             out[j++] = formula[i++];
@@ -1496,82 +1519,26 @@ char* translate_formula_for_paste(const char* formula, int dcol, int drow) {
             continue;
         }
 
-        if ((formula[i] == '$' || isalpha((unsigned char)formula[i])) &&
+        if (scan_cellref(formula + i, &ref) &&
             (i == 0 || !(isalpha((unsigned char)formula[i - 1]) ||
                          isdigit((unsigned char)formula[i - 1]) ||
                          formula[i - 1] == '$'))) {
-            size_t start = i;
-            int col_anchor = 0;
-            int row_anchor = 0;
-            char col_char = 0;
-            long row_num = 0;
-            size_t row_start = 0;
-            int has_row_digits = 0;
+            int new_col = ref.col;
+            int new_row = ref.row;
 
-            if (formula[i] == '$') {
-                col_anchor = 1;
-                i++;
-            }
+            if (!ref.col_anchor) new_col += dcol;
+            if (!ref.row_anchor) new_row += drow;
 
-            if (i < len && isalpha((unsigned char)formula[i])) {
-                col_char = (char)toupper((unsigned char)formula[i++]);
-            }
-            else {
-                i = start;
-                out[j++] = formula[i++];
-                continue;
-            }
+            if (new_col < 0) new_col = 0;
+            if (new_col >= MAX_COLS) new_col = MAX_COLS - 1;
+            if (new_row < 0) new_row = 0;
+            if (new_row >= MAX_ROWS) new_row = MAX_ROWS - 1;
 
-            if (i < len && formula[i] == '$') {
-                row_anchor = 1;
-                i++;
-            }
-
-            row_start = i;
-            while (i < len && isdigit((unsigned char)formula[i])) {
-                has_row_digits = 1;
-                row_num = row_num * 10 + (formula[i] - '0');
-                i++;
-            }
-
-            if (!has_row_digits) {
-                i = start;
-                out[j++] = formula[i++];
-                continue;
-            }
-
-            if (col_char >= 'A' && col_char <= 'Z' && row_num >= 1) {
-                int new_col = (col_char - 'A');
-                int new_row = ((int)row_num - 1);
-
-                if (!col_anchor) {
-                    new_col += dcol;
-                }
-                if (!row_anchor) {
-                    new_row += drow;
-                }
-
-                if (new_col < 0) new_col = 0;
-                if (new_col >= MAX_COLS) new_col = MAX_COLS - 1;
-                if (new_row < 0) new_row = 0;
-                if (new_row >= MAX_ROWS) new_row = MAX_ROWS - 1;
-
-                if (col_anchor) out[j++] = '$';
-                out[j++] = (char)('A' + new_col);
-                if (row_anchor) out[j++] = '$';
-                j += (size_t)snprintf(out + j, cap - j, "%d", new_row + 1);
-                continue;
-            }
-
-            if (col_anchor) out[j++] = '$';
-            out[j++] = col_char;
-            if (row_anchor) out[j++] = '$';
-            if (row_start < i) {
-                size_t raw_len = i - row_start;
-                if (raw_len > cap - j - 1) raw_len = cap - j - 1;
-                memcpy(out + j, formula + row_start, raw_len);
-                j += raw_len;
-            }
+            if (ref.col_anchor) out[j++] = '$';
+            out[j++] = (char)('A' + new_col);
+            if (ref.row_anchor) out[j++] = '$';
+            j += (size_t)snprintf(out + j, cap - j, "%d", new_row + 1);
+            i += ref.len;
             continue;
         }
 
