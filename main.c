@@ -1129,7 +1129,15 @@ Value parse_expr(char* e) {
     next_char();
     get_token();
     Value v;
-    v = eval_expr();    
+    v = eval_expr();
+    if (v.type == TYPE_ERROR) return v;
+
+    // Reject formulas that parsed only a valid prefix but have extra junk at the end
+    if (tok_type != tokEnd) {
+        free_val(&v);
+        return errExprInvalid;
+    }
+
     return v;
 }
 
