@@ -1470,7 +1470,7 @@ void clrcell(void) {
     }
 }
 
-int print_cell(int col, int row) MYCC {
+int print_cell(int col, int row, Cell* c) MYCC {
     int cx, cy;
     cx = 4 + (col - view_c) * (CELL_W + 1);
     cy = 1 + (row - view_r);
@@ -1481,7 +1481,7 @@ int print_cell(int col, int row) MYCC {
     else {
         standard();
     }
-    Cell* c = find_cell(col, row);
+
     if (c) {
         eval_cell(c);  // lazy update on render path
     }
@@ -1562,44 +1562,50 @@ uint8_t get_overlapped_text(int target_col, int row, char* out, int out_size) {
     if (!out || out_size <= 0) return 0;
     out[0] = '\0';
 
-    for (int src_col = target_col - 1; src_col >= 0; src_col--) {
-        Cell* src = find_cell(src_col, row);
-        if (!src || !src->content) continue;
+    int src_col = target_col - 1;
+    Cell* src = NULL;
 
-        eval_cell(src);
-        Value v = src->cached;
-        if (!(v.type == TYPE_STR || v.type == TYPE_TEXT)) continue;
-
-        const char* text = v.str;
-        if (!text) continue;
-        if (*text == '\'') text++;
-
-        size_t text_len = strlen(text);
-        if (text_len <= CELL_W) continue;
-
-        int block_col = src_col + 1;
-        while (block_col < MAX_COLS) {
-            Cell* n = find_cell(block_col, row);
-            if (n && n->content && *n->content) break;
-            block_col++;
+    while (src_col >= 0) {
+        src = find_cell(src_col, row);
+        if (src && src->content && *src->content) {
+            break;
         }
-
-        int max_span_col = block_col - 1;
-        if (target_col > max_span_col) continue;
-
-        int span_index = target_col - src_col;
-        size_t start_index = (size_t)span_index * (CELL_W + 1);
-        if (start_index >= text_len) continue;
-
-        int copy_len = (int)(text_len - start_index);
-        if (copy_len > out_size - 1) copy_len = out_size - 1;
-
-        memcpy(out, text + start_index, copy_len);
-        out[copy_len] = '\0';
-        return 1;
+        src_col--;
     }
 
-    return 0;
+    if (!src || src_col < 0) return 0;
+
+    eval_cell(src);
+    Value v = src->cached;
+    if (!(v.type == TYPE_STR || v.type == TYPE_TEXT)) return 0;
+
+    const char* text = v.str;
+    if (!text) return 0;
+    if (*text == '\'') text++;
+
+    size_t text_len = strlen(text);
+    if (text_len <= CELL_W) return 0;
+
+    int block_col = src_col + 1;
+    while (block_col < MAX_COLS) {
+        Cell* n = find_cell(block_col, row);
+        if (n && n->content && *n->content) break;
+        block_col++;
+    }
+
+    int max_span_col = block_col - 1;
+    if (target_col > max_span_col) return 0;
+
+    int span_index = target_col - src_col;
+    size_t start_index = (size_t)span_index * (CELL_W + 1);
+    if (start_index >= text_len) return 0;
+
+    int copy_len = (int)(text_len - start_index);
+    if (copy_len > out_size - 1) copy_len = out_size - 1;
+
+    memcpy(out, text + start_index, copy_len);
+    out[copy_len] = '\0';
+    return 1;
 }
 
 
@@ -1849,7 +1855,7 @@ void print_row_headers(void) {
 void print_view_cell(int realc, int realr) {
     Cell* c = find_cell(realc, realr);
     if (c && c->content) {
-        (void)print_cell(realc, realr);
+        (void)print_cell(realc, realr, c);
         return;
     }
 
@@ -1910,7 +1916,7 @@ void print_view(void) {
 
                 Cell* c = find_cell(realc, realr);
                 if (c && c->content) {
-                    int cell_span = print_cell(realc, realr);
+                    int cell_span = print_cell(realc, realr, c);
                     for (int k = 1; k < cell_span && (cc + k) < VIEW_COLS; k++) {
                         covered[cc + k] = 1;
                     }
