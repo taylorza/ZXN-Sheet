@@ -80,6 +80,7 @@ Value  make_str(const char* s);
 void   free_val(Value *v);
 void error(const char* fmt, ...);
 void status(const char* fmt, ...);
+uint8_t get_overlapped_text(int target_col, int row, char* out, int out_size);
 
 typedef struct Dep {
     struct Cell* cell;
@@ -1500,7 +1501,7 @@ void clrcell(void) {
     }
 }
 
-void print_cell(int col, int row) MYCC {
+int print_cell(int col, int row) MYCC {
     int cx, cy;
     cx = 4 + (col - view_c) * (CELL_W + 1);
     cy = 1 + (row - view_r);
@@ -1516,13 +1517,13 @@ void print_cell(int col, int row) MYCC {
         eval_cell(c);  // lazy update on render path
     }
 
+    int span_cols = 1;
+    uint8_t is_spanning = 0;
+
     if (c && c->content) {
         Value v = c->cached;
         if (v.type == TYPE_ERROR) {
             print("%*s", CELL_W, "<error>");
-            if (col == ccol && row == crow) {
-                error("Error: %s", v.str);
-            }
         }
         else if (v.type == TYPE_NUM) {
             int written = snprintf(ln, sizeof(ln), "%*g", CELL_W, v.num);
@@ -1534,16 +1535,104 @@ void print_cell(int col, int row) MYCC {
         else if (v.str) {
             int skip_first = 0;
             if (*v.str == '\'') skip_first = 1;
-            snprintf(ln, sizeof(ln), "%*.*s", CELL_W, CELL_W, v.str + skip_first);
-            prints(ln);         
+            const char* text = v.str + skip_first;
+            size_t text_len = strlen(text);
+
+            if (text_len > CELL_W) {
+                /* Span across empty adjacent cells until edge or occupied cell */
+                int max_col = view_c + VIEW_COLS - 1;
+                int extra_cols = 0;
+                int total_width = CELL_W;
+
+                for (int next_col = col + 1; next_col <= max_col; next_col++) {
+                    Cell* neighbour = find_cell(next_col, row);
+                    if (neighbour && neighbour->content && *neighbour->content) {
+                        break; // stop at first occupied neighbour
+                    }
+                    extra_cols++;
+                    total_width += (CELL_W + 1); // include the inter-cell spacing
+                }
+
+                int chars_to_print = (text_len < (size_t)total_width) ? (int)text_len : total_width;
+                print("%.*s", chars_to_print, text);
+
+                if (chars_to_print < total_width) {
+                    for (int i = chars_to_print; i < total_width; i++) {
+                        putch(' ');
+                    }
+                }
+
+                span_cols = 1 + extra_cols;
+                is_spanning = 1;
+            }
+            else {
+                snprintf(ln, sizeof(ln), "%*.*s", CELL_W, CELL_W, text);
+                prints(ln);
+            }
         }
-        else
+        else {
             clrcell();
+            standard();
+            return span_cols;
+        }
     }
-    else
+    else {
         clrcell();
+        standard();
+        return span_cols;
+    }
+
+    if (!is_spanning) {
+        putch(' ');
+    }
     standard();
+    return span_cols;
 }
+
+uint8_t get_overlapped_text(int target_col, int row, char* out, int out_size) {
+    if (!out || out_size <= 0) return 0;
+    out[0] = '\0';
+
+    for (int src_col = target_col - 1; src_col >= 0; src_col--) {
+        Cell* src = find_cell(src_col, row);
+        if (!src || !src->content) continue;
+
+        eval_cell(src);
+        Value v = src->cached;
+        if (!(v.type == TYPE_STR || v.type == TYPE_TEXT)) continue;
+
+        const char* text = v.str;
+        if (!text) continue;
+        if (*text == '\'') text++;
+
+        size_t text_len = strlen(text);
+        if (text_len <= CELL_W) continue;
+
+        int block_col = src_col + 1;
+        while (block_col < MAX_COLS) {
+            Cell* n = find_cell(block_col, row);
+            if (n && n->content && *n->content) break;
+            block_col++;
+        }
+
+        int max_span_col = block_col - 1;
+        if (target_col > max_span_col) continue;
+
+        int span_index = target_col - src_col;
+        size_t start_index = (size_t)span_index * (CELL_W + 1);
+        if (start_index >= text_len) continue;
+
+        int copy_len = (int)(text_len - start_index);
+        if (copy_len > out_size - 1) copy_len = out_size - 1;
+
+        memcpy(out, text + start_index, copy_len);
+        out[copy_len] = '\0';
+        return 1;
+    }
+
+    return 0;
+}
+
 
 #define HOTKEY_ITEM_WIDTH 12
 #define HOTKEY_ITEMS_PER_LINE (int)(SCREEN_WIDTH / HOTKEY_ITEM_WIDTH)
@@ -1815,11 +1904,63 @@ void print_view(void) {
     }
 
     for (int rr = 0; rr < VIEW_ROWS; rr++) {
-        set_cursor_pos(3, rr + 1);
         int realr = view_r + rr;
+
+        uint8_t covered[VIEW_COLS] = {0};
         for (int cc = 0; cc < VIEW_COLS; cc++) {
             int realc = view_c + cc;
-            print_cell(realc, realr);
+
+            if (covered[cc]) {
+                if (realr == crow && realc == ccol) {
+                    int cx = 4 + (realc - view_c) * (CELL_W + 1);
+                    int cy = 1 + (realr - view_r);
+                    set_cursor_pos(cx, cy);
+                    highlight();
+
+                    char overlapped[CELL_W + 2] = {0};
+                    if (get_overlapped_text(realc, realr, overlapped, sizeof(overlapped))) {
+                        char gap = overlapped[CELL_W] ? overlapped[CELL_W] : ' ';
+                        print("%-*.*s", CELL_W, CELL_W, overlapped);
+                        putch(gap);
+                    } else {
+                        clrcell();
+                        putch(' ');
+                    }
+
+                    standard();
+                }
+                continue;
+            }
+
+            Cell* c = find_cell(realc, realr);
+            if (c && c->content) {
+                int cell_span = print_cell(realc, realr);
+                for (int k = 1; k < cell_span && (cc + k) < VIEW_COLS; k++) {
+                    covered[cc + k] = 1;
+                }
+                continue;
+            }
+
+            char spill[CELL_W + 2] = {0};
+            if (get_overlapped_text(realc, realr, spill, sizeof(spill))) {
+                int cx = 4 + (realc - view_c) * (CELL_W + 1);
+                int cy = 1 + (realr - view_r);
+                char gap = spill[CELL_W] ? spill[CELL_W] : ' ';
+                set_cursor_pos(cx, cy);
+                if (realr == crow && realc == ccol) highlight(); else standard();
+                print("%-*.*s", CELL_W, CELL_W, spill);
+                putch(gap);
+                standard();
+                continue;
+            }
+
+            int cx = 4 + (realc - view_c) * (CELL_W + 1);
+            int cy = 1 + (realr - view_r);
+            set_cursor_pos(cx, cy);
+            if (realr == crow && realc == ccol) highlight(); else standard();
+            clrcell();
+            putch(' ');
+            standard();
         }
     }
     
