@@ -531,6 +531,7 @@ uint8_t expect_token(TokenType expected) {
 static int view_r = 0, view_c = 0;
 static int ccol = 0, crow = 0;
 static int prev_ccol = 0, prev_crow = 0;
+static int last_move_dc = 0, last_move_dr = 0;
 static char* clipboard_content = NULL;
 static int clipboard_col = -1;
 static int clipboard_row = -1;
@@ -1937,10 +1938,14 @@ CommandAction sheet_copy(void) MYCC {
     char* copied;
 
     src = find_cell(ccol, crow);
-    if (!src || !src->content || !*src->content) {
-        status("Nothing to copy");
+    if (!src || !src->content || !*src->content) {        
         return COMMAND_ACTION_NONE;
     }
+
+    free(clipboard_content);
+    clipboard_content = NULL;
+    clipboard_col = -1;
+    clipboard_row = -1;
 
     copied = strdup(src->content);
     if (!copied) {
@@ -1948,11 +1953,9 @@ CommandAction sheet_copy(void) MYCC {
         return COMMAND_ACTION_NONE;
     }
 
-    free(clipboard_content);
     clipboard_content = copied;
     clipboard_col = ccol;
     clipboard_row = crow;
-    status("Copied %c%d", 'A' + ccol, crow + 1);
     return COMMAND_ACTION_NONE;
 }
 
@@ -1960,9 +1963,12 @@ CommandAction sheet_paste(void) MYCC {
     char* to_write = NULL;
     int dcol = 0;
     int drow = 0;
+    int pasted_col = ccol;
+    int pasted_row = crow;
+    int next_col;
+    int next_row;
 
     if (!clipboard_content || clipboard_col < 0 || clipboard_row < 0) {
-        status("Clipboard empty");
         return COMMAND_ACTION_NONE;
     }
 
@@ -1985,7 +1991,35 @@ CommandAction sheet_paste(void) MYCC {
 
     set_cell(ccol, crow, to_write);
     free(to_write);
-    status("Pasted to %c%d", 'A' + ccol, crow + 1);
+    if (last_move_dc != 0 || last_move_dr != 0) {
+        next_col = ccol + last_move_dc;
+        next_row = crow + last_move_dr;
+
+        if (next_col >= 0 && next_col < MAX_COLS && next_row >= 0 && next_row < MAX_ROWS) {
+            prev_ccol = ccol;
+            prev_crow = crow;
+            ccol = next_col;
+            crow = next_row;
+
+            if (ccol < view_c) {
+                view_c = ccol;
+                redraw = REDRAW_ALL;
+            }
+            else if (ccol >= view_c + VIEW_COLS) {
+                view_c = ccol - VIEW_COLS + 1;
+                redraw = REDRAW_ALL;
+            }
+
+            if (crow < view_r) {
+                view_r = crow;
+                redraw = REDRAW_ALL;
+            }
+            else if (crow >= view_r + VIEW_ROWS) {
+                view_r = crow - VIEW_ROWS + 1;
+                redraw = REDRAW_ALL;
+            }
+        }
+    }
     return COMMAND_ACTION_NONE;
 }
 
@@ -2127,7 +2161,7 @@ void print_view(void) {
     }
 }
 
-void move_cursor(int dc, int dr) {
+void move_cursor(int dc, int dr) MYCC {
     int nc = ccol + dc;
     int nr = crow + dr;
 
@@ -2139,6 +2173,8 @@ void move_cursor(int dc, int dr) {
     prev_crow = crow;
     ccol = nc;
     crow = nr;
+    last_move_dc = dc;
+    last_move_dr = dr;
 
     if (ccol < view_c) {
         view_c = ccol;
