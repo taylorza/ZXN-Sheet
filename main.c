@@ -41,7 +41,7 @@
 
 #define MAX_FUNC_ARGS 5
 
-typedef enum { REDRAW_ALL, REDRAW_CONTENT } REDRAW_MODE;
+typedef enum { REDRAW_ALL, REDRAW_CONTENT, REDRAW_CURSOR } REDRAW_MODE;
 
 char ln[80];
 char* e_filename = NULL;
@@ -92,7 +92,7 @@ typedef struct Cell {
     Dep* deps;          // cells this cell references
     Dep* revdeps;       // cells referemcing this cell
 
-    int col, row;
+    uint8_t col, row;
     char* content;      // raw text
     Value cached;
 
@@ -473,11 +473,10 @@ uint8_t expect_token(TokenType expected) {
     return 1;
 }
 
-char* trim(char* s);
-
 /* Globals */
 static int view_r = 0, view_c = 0;
 static int ccol = 0, crow = 0;
+static int prev_ccol = 0, prev_crow = 0;
 
 /* Helpers for Value */
 Value make_num(float v) {
@@ -496,23 +495,6 @@ void free_val(Value *v) {
     }
     v->type = TYPE_NULL;
     v->str = NULL;
-}
-
-// Trim leading/trailing space
-char* trim(char* s) {
-    if (!s) return NULL;
-
-    while (*s && isspace((unsigned char)*s)) {
-        ++s;
-    }
-
-    char* end = s + strlen(s);
-    while (end > s && isspace((unsigned char)*(end - 1))) {
-        --end;
-    }
-    *end = 0;
-
-    return s;
 }
 
 Cell* new_cell(int c, int r) {
@@ -960,11 +942,34 @@ Value process_range(
     return x;
 }
 
+void reset_cell_state(Cell* p) {
+    free_val(&p->cached);
+    p->content = NULL;
+    p->flags = 0;
+    remove_deps(p);
+}
+
 /* Assignment: text may be formula, pure-number, or string */
 void set_cell(int c, int r, const char* s) {
     Cell* p = find_cell(c, r);
     char* txtbuf = NULL;
-    if (!p && (!s || !*s)) return; // no cell, no text -> nothing to do
+
+    const char* txt_start = s;
+    const char* txt_end = s;
+    size_t txt_len = 0;
+
+    if (s) {
+        while (*txt_start && isspace((unsigned char)*txt_start)) {
+            ++txt_start;
+        }
+        txt_end = txt_start + strlen(txt_start);
+        while (txt_end > txt_start && isspace((unsigned char)*(txt_end - 1))) {
+            --txt_end;
+        }
+        txt_len = (size_t)(txt_end - txt_start);
+    }
+
+    if (!p && txt_len == 0) return; // no cell, no text -> nothing to do
 
     if (!p) {
         p = new_cell(c, r);
@@ -974,100 +979,63 @@ void set_cell(int c, int r, const char* s) {
         }
     }
     else if (p->content) {
-        if (s && strcmp(p->content, s) == 0) return; // No change -> nothing to do
+        size_t prev_len = strlen(p->content);
+        if (txt_len == prev_len && (txt_len == 0 || strncmp(p->content, txt_start, txt_len) == 0)) {
+            return; // No change -> nothing to do
+        }
         free(p->content);
         p->content = NULL;
     }
 
-    char* txt = NULL;
-    if (s) {
-        txtbuf = strdup(s);
-        if (txtbuf == NULL) {
-            error(errOutOfMemory.str);
-
-            free_val(&p->cached);
-            p->content = NULL;
-            p->flags = 0;
-            remove_deps(p);
-            return;
-        }
-        txt = trim(txtbuf);
-    }
-
-    if (!txt || !*txt) {
-        free_val(&p->cached);
-        p->content = NULL;
-        p->flags = 0;
-
-        remove_deps(p);
-        free(txtbuf);
+    if (txt_len == 0) {
+        reset_cell_state(p);
         goto reevaluate;
     }
 
-    /* detect formula vs numeric vs string */
-    if (*txt == '=') {
-        p->flags |= FLG_FORMULA;
-        p->content = strdup(txt);
-        if (p->content == NULL) {
-            error(errOutOfMemory.str);
-
-            free_val(&p->cached);
-            p->content = NULL;
-            p->flags = 0;
-            remove_deps(p);
-            free(txtbuf);
-            return;
-        }
+    txtbuf = malloc(txt_len + 1);
+    if (txtbuf == NULL) {
+        error(errOutOfMemory.str);
+        reset_cell_state(p);
+        return;
     }
-    else if (*txt =='\'') {
+    memcpy(txtbuf, txt_start, txt_len);
+    txtbuf[txt_len] = 0;
+
+    /* detect formula vs numeric vs string */
+    if (*txtbuf == '=') {
+        p->flags |= FLG_FORMULA;
+        p->content = txtbuf;
+        txtbuf = NULL;
+    }
+    else if (*txtbuf =='\'') {
         /* string literal */
         p->flags &= MSK_FORMULA; // clear formula flag
-        p->content = strdup(txt);
-        if (p->content == NULL) {
-            error(errOutOfMemory.str);
-
-            free_val(&p->cached);
-            p->content = NULL;
-            p->flags = 0;
-            remove_deps(p);
-            free(txtbuf);
-            return;
-        }
+        p->content = txtbuf;
+        txtbuf = NULL;
     }
     else {
         char* end;
-        float v = strtof(txt, &end);
-        if (end > txt && *end == 0) {
+        float v = strtof(txtbuf, &end);
+        if (end > txtbuf && *end == 0) {
             /* pure number → treat as single-term formula */
             p->flags |= FLG_FORMULA;
-            p->content = malloc(strlen(txt) + 2);
+            p->content = malloc(txt_len + 2);
             if (!p->content) {
                 error(errOutOfMemory.str);
-
-                free_val(&p->cached);
-                p->content = NULL;
-                p->flags = 0;
-                remove_deps(p);
+                reset_cell_state(p);
                 free(txtbuf);
                 return;
             }
-            snprintf(p->content, strlen(txt) + 2, "=%s", txt);
+            snprintf(p->content, txt_len + 2, "=%s", txtbuf);
         }
         else {
             /* string */
             p->flags &= MSK_FORMULA;
-            p->content = strdup(txt);
-            if (p->content == NULL) {
-                error(errOutOfMemory.str);
-
-                free_val(&p->cached);
-                p->content = NULL;
-                p->flags = 0;
-                remove_deps(p);
-                free(txtbuf);
-                return;
-            }            
+            p->content = txtbuf;
+            txtbuf = NULL;
         }
+
+        (void)v;
     }
 
     free(txtbuf);
@@ -1110,6 +1078,7 @@ void set_cell(int c, int r, const char* s) {
 
 reevaluate:
     is_dirty = 1; // mark spreadsheet dirty
+    redraw = REDRAW_CONTENT;
     propagate_dirty(p);
     eval_cell(p); // force evaluation
 }
@@ -1891,6 +1860,36 @@ void print_row_headers(void) {
     standard();
 }
 
+void print_view_cell(int realc, int realr) {
+    Cell* c = find_cell(realc, realr);
+    if (c && c->content) {
+        (void)print_cell(realc, realr);
+        return;
+    }
+
+    char spill[CELL_W + 2] = {0};
+    if (get_overlapped_text(realc, realr, spill, sizeof(spill))) {
+        int cx = 4 + (realc - view_c) * (CELL_W + 1);
+        int cy = 1 + (realr - view_r);
+        char gap = spill[CELL_W] ? spill[CELL_W] : ' ';
+        set_cursor_pos(cx, cy);
+        if (realr == crow && realc == ccol) highlight(); else standard();
+        snprintf(ln, sizeof(ln), "%-*.*s", CELL_W, CELL_W, spill);
+        prints(ln);
+        putch(gap);
+        standard();
+        return;
+    }
+
+    int cx = 4 + (realc - view_c) * (CELL_W + 1);
+    int cy = 1 + (realr - view_r);
+    set_cursor_pos(cx, cy);
+    if (realr == crow && realc == ccol) highlight(); else standard();
+    clrcell();
+    putch(' ');
+    standard();
+}
+
 
 /* Print viewport */
 void print_view(void) {
@@ -1903,66 +1902,49 @@ void print_view(void) {
         redraw = REDRAW_CONTENT;
     }
 
-    for (int rr = 0; rr < VIEW_ROWS; rr++) {
-        int realr = view_r + rr;
+    if (redraw == REDRAW_CONTENT) {
+        for (int rr = 0; rr < VIEW_ROWS; rr++) {
+            int realr = view_r + rr;
 
-        uint8_t covered[VIEW_COLS] = {0};
-        for (int cc = 0; cc < VIEW_COLS; cc++) {
-            int realc = view_c + cc;
+            uint8_t covered[VIEW_COLS] = {0};
+            for (int cc = 0; cc < VIEW_COLS; cc++) {
+                int realc = view_c + cc;
 
-            if (covered[cc]) {
-                if (realr == crow && realc == ccol) {
-                    int cx = 4 + (realc - view_c) * (CELL_W + 1);
-                    int cy = 1 + (realr - view_r);
-                    set_cursor_pos(cx, cy);
-                    highlight();
-
-                    char overlapped[CELL_W + 2] = {0};
-                    if (get_overlapped_text(realc, realr, overlapped, sizeof(overlapped))) {
-                        char gap = overlapped[CELL_W] ? overlapped[CELL_W] : ' ';
-                        print("%-*.*s", CELL_W, CELL_W, overlapped);
-                        putch(gap);
-                    } else {
-                        clrcell();
-                        putch(' ');
+                if (covered[cc]) {
+                    if (realr == crow && realc == ccol) {
+                        print_view_cell(realc, realr);
                     }
-
-                    standard();
+                    continue;
                 }
-                continue;
-            }
 
-            Cell* c = find_cell(realc, realr);
-            if (c && c->content) {
-                int cell_span = print_cell(realc, realr);
-                for (int k = 1; k < cell_span && (cc + k) < VIEW_COLS; k++) {
-                    covered[cc + k] = 1;
+                Cell* c = find_cell(realc, realr);
+                if (c && c->content) {
+                    int cell_span = print_cell(realc, realr);
+                    for (int k = 1; k < cell_span && (cc + k) < VIEW_COLS; k++) {
+                        covered[cc + k] = 1;
+                    }
+                    continue;
                 }
-                continue;
-            }
 
-            char spill[CELL_W + 2] = {0};
-            if (get_overlapped_text(realc, realr, spill, sizeof(spill))) {
-                int cx = 4 + (realc - view_c) * (CELL_W + 1);
-                int cy = 1 + (realr - view_r);
-                char gap = spill[CELL_W] ? spill[CELL_W] : ' ';
-                set_cursor_pos(cx, cy);
-                if (realr == crow && realc == ccol) highlight(); else standard();
-                print("%-*.*s", CELL_W, CELL_W, spill);
-                putch(gap);
-                standard();
-                continue;
+                print_view_cell(realc, realr);
             }
-
-            int cx = 4 + (realc - view_c) * (CELL_W + 1);
-            int cy = 1 + (realr - view_r);
-            set_cursor_pos(cx, cy);
-            if (realr == crow && realc == ccol) highlight(); else standard();
-            clrcell();
-            putch(' ');
-            standard();
         }
     }
+    else if (redraw == REDRAW_CURSOR) {
+        if (prev_ccol >= view_c && prev_ccol < view_c + VIEW_COLS &&
+            prev_crow >= view_r && prev_crow < view_r + VIEW_ROWS) {
+            print_view_cell(prev_ccol, prev_crow);
+        }
+        if ((ccol != prev_ccol || crow != prev_crow) &&
+            ccol >= view_c && ccol < view_c + VIEW_COLS &&
+            crow >= view_r && crow < view_r + VIEW_ROWS) {
+            print_view_cell(ccol, crow);
+        }
+    }
+
+    redraw = REDRAW_CURSOR;
+    prev_ccol = ccol;
+    prev_crow = crow;
     
     if (!has_error) {
         set_cursor_pos(0, STATUS_LINE_ROW);
@@ -1985,36 +1967,52 @@ void print_view(void) {
     clreol();
 }
 
-void move_left(void) {
-    if (ccol > 0) ccol--;
+void move_cursor(int dc, int dr) {
+    int nc = ccol + dc;
+    int nr = crow + dr;
+
+    if (nc < 0 || nc >= MAX_COLS || nr < 0 || nr >= MAX_ROWS) {
+        return;
+    }
+
+    prev_ccol = ccol;
+    prev_crow = crow;
+    ccol = nc;
+    crow = nr;
+
     if (ccol < view_c) {
-        view_c--;
+        view_c = ccol;
         redraw = REDRAW_ALL;
     }
+    else if (ccol >= view_c + VIEW_COLS) {
+        view_c = ccol - VIEW_COLS + 1;
+        redraw = REDRAW_ALL;
+    }
+
+    if (crow < view_r) {
+        view_r = crow;
+        redraw = REDRAW_ALL;
+    }
+    else if (crow >= view_r + VIEW_ROWS) {
+        view_r = crow - VIEW_ROWS + 1;
+        redraw = REDRAW_ALL;
+    }
+}
+
+void move_left(void) {
+    move_cursor(-1, 0);
 }
 
 void move_right(void) {
-    if (ccol < MAX_COLS - 1) ccol++;
-    if (ccol >= view_c + VIEW_COLS) {
-        view_c++;
-        redraw = REDRAW_ALL;
-    }
+    move_cursor(1, 0);
 }
 
 void move_up(void) {
-    if (crow > 0) crow--;
-    if (crow < view_r) {
-        view_r--;
-        redraw = REDRAW_ALL;
-    }
+    move_cursor(0, -1);
 }
 
 void move_down(void) {
-    if (crow < MAX_ROWS - 1) crow++;
-    if (crow >= view_r + VIEW_ROWS) {
-        view_r++; 
-        redraw = REDRAW_ALL;
-    }
+    move_cursor(0, 1);
 }
 
 
