@@ -11,12 +11,12 @@ To open an untitled, empty document
 
 Load an existing document
 
-`.sheet myfile.zsc`
+`.sheet myfile.zxl`
 
-* If `myfile.zsc` exists, it will be loaded.
+* If `myfile.zxl` exists, it will be loaded.
 * If it does not exist, a new document will be created with that name as the default.
 
-`.zsc` is the recommended file extension, but is not enforced by the program.
+`.zxl` is the recommended file extension, but is not enforced by the program.
 
 ## Navigation
 Use the cursor keys to move between cells:
@@ -33,7 +33,7 @@ Activate Extend Mode by pressing the `Extend Mode` key or `CTRL`+`SHIFT` in CSpe
 
 |Key|Description|
 |---|-----------|
-| `↑S` Save | Saves the current document (recommend using `.zsc` file extension) |
+| `↑S` Save | Saves the current document (recommend using `.zxl` file extension) |
 | `↑G` Goto | Moves directly to a specified cell | 
 | `↑C` Copy | Copies the content of the current cell to the clipboard (**single-cell copy only**) | 
 | `↑V` Paste | Pastes the content of the clipboard to the current cell. After pasting, the cursor moves one cell in the **last navigation direction used before paste**. |

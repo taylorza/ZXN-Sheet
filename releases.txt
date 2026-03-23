@@ -1,6 +1,6 @@
 2026/03/22 - Version 0.3
 - Performance and robustness improvements
-- Added copy/paste with automatice cell reference updates
+- Added copy/paste with automatic cell reference updates
 - Anchored cell references. $ anchors row and/or column in a formula (Like Excel)
 - Long strings can span multiple cells
 - Added power '^' operator
