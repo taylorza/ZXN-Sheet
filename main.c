@@ -139,11 +139,11 @@ typedef Value(*PFN_EVAL)(void* state);
 
 typedef enum {
     tokNone,
-    tokCellRef, tokRange, tokNumber, tokString, 
+    tokCellRef, tokRange, tokNumber, tokString, tokCurrentCell,
     tokEq, tokNe, tokLt, tokLe, tokGt, tokGe, 
     tokPlus, tokMinus, tokMul, tokDiv, tokMod, tokPow, tokLParen, tokRParen, tokComma, tokEnd,
     tokScalarFunc,
-    tokRangeFunc,
+    tokRangeFunc, tokConditionalRangeFunc,
 
     tokError, 
 } TokenType;
@@ -162,6 +162,8 @@ Value sum_eval(void* state);
 Value avg_eval(void* state);
 void count_range(void* state, Cell* cell);
 Value count_eval(void* state);
+void countif_range(void* state, Cell* cell);
+void sumif_range(void* state, Cell* cell);
 void max_range(void* state, Cell* cell);
 void min_range(void* state, Cell* cell);
 Value best_eval(void* state);
@@ -198,6 +200,8 @@ Function functions[] = {
     { "COUNT", count_range, count_eval, tokRangeFunc, 1, 1 },
     { "MAX", max_range, best_eval, tokRangeFunc, 1, 1 },
     { "MIN", min_range, best_eval, tokRangeFunc, 1, 1 },
+    { "COUNTIF", countif_range, count_eval, tokConditionalRangeFunc, 2, 2 },
+    { "SUMIF", sumif_range, sum_eval, tokConditionalRangeFunc, 2, 2 },
     { "SIN", NULL, sin_eval, tokScalarFunc, 1, 1},
     { "COS", NULL, cos_eval, tokScalarFunc, 1, 1},
     { "TAN", NULL, tan_eval, tokScalarFunc, 1, 1},
@@ -462,6 +466,12 @@ void get_token(void) {
     }
     else {
         switch (ch) {
+            case '?':
+                token[0] = '?';
+                token[1] = 0;
+                tok_type = tokCurrentCell;
+                next_char();
+                break;
             case '=': tok_type = tokEq; next_char(); break;
             case '<': 
             next_char();
@@ -536,6 +546,7 @@ static int last_move_dc = 0, last_move_dr = 0;
 static char* clipboard_content = NULL;
 static int clipboard_col = -1;
 static int clipboard_row = -1;
+static Cell* condition_cell = NULL;
 
 /* Helpers for Value */
 Value make_num(float v) {
@@ -676,11 +687,19 @@ void propagate_dirty(Cell* c) {
 
 /* Evaluate a cell (with caching & cycle detect) */
 void eval_cell(Cell* c);
+void eval_cell_core(Cell* c);
 Value eval_expr(void);
 Value eval_expr1(void);
 Value eval_term(void);
 Value eval_power(void);
 Value eval_factor(void);
+Value parse_expr(char* e);
+Value process_conditional_range(
+    int c1, int r1, int c2, int r2,
+    const char* condition,
+    void* state,
+    PFN_ACCUM pfn_accum,
+    PFN_EVAL pfn_eval);
 
 void parse_cellref(const char** sp, int* col, int* row) {
     CellRefInfo ref;
@@ -712,6 +731,19 @@ typedef struct {
     float best;
     int count;
 } AccumState;
+
+void countif_range(void* state, Cell* cell) {
+    AccumState* acc = (AccumState*)state;
+    (void)cell;
+    acc->count++;
+}
+
+void sumif_range(void* state, Cell* cell) {
+    AccumState* acc = (AccumState*)state;
+    if (cell->cached.type == TYPE_NUM) {
+        acc->total += cell->cached.num;
+    }
+}
 
 void sum_range(void* state, Cell* cell) {
     AccumState* acc = (AccumState*)state;
@@ -950,6 +982,16 @@ void set_range_dep(void* state, Cell* cell) {
     add_dep(root, cell);
 }
 
+void add_range_deps(Cell* root, int c1, int r1, int c2, int r2) {
+    for (int cc = c1; cc <= c2; cc++) {
+        for (int rr = r1; rr <= r2; rr++) {
+            Cell* cell = find_cell(cc, rr);
+            if (!cell) cell = new_cell(cc, rr);
+            if (cell) add_dep(root, cell);
+        }
+    }
+}
+
 Value process_range(
     int c1, int r1, int c2, int r2,
     void* state,
@@ -981,6 +1023,48 @@ Value process_range(
         x = make_num(0);  /* default to zero if no final fn */
     }
     return x;
+}
+
+Value process_conditional_range(
+    int c1, int r1, int c2, int r2,
+    const char* condition,
+    void* state,
+    PFN_ACCUM pfn_accum,
+    PFN_EVAL pfn_eval) {
+
+    Cell empty = { 0 };
+    Cell* previous_condition_cell = condition_cell;
+    empty.flags = FLG_EMPTY;
+
+    for (int cc = c1; cc <= c2; cc++) {
+        for (int rr = r1; rr <= r2; rr++) {
+            Cell* cell = find_cell(cc, rr);
+            if (!cell) {
+                empty.col = cc;
+                empty.row = rr;
+                cell = &empty;
+            }
+            else {
+                eval_cell(cell);
+            }
+
+            condition_cell = cell;
+            Value result = parse_expr((char*)condition);
+            if (result.type == TYPE_ERROR) {
+                condition_cell = previous_condition_cell;
+                return result;
+            }
+            if (result.type == TYPE_NUM && result.num != 0) {
+                pfn_accum(state, cell);
+            }
+            free_val(&result);
+        }
+    }
+
+    condition_cell = previous_condition_cell;
+
+    Value result = pfn_eval(state);
+    return result;
 }
 
 void reset_cell_state(Cell* p) {
@@ -1106,12 +1190,7 @@ void set_cell(int c, int r, const char* s) {
                 /* range reference */
                 int c1, r1, c2, r2;
                 parse_range(&ref, &c1, &r1, &c2, &r2);
-                Value v = process_range(
-                    c1, r1, c2, r2,
-                    p,
-                    set_range_dep,
-                    NULL);
-                free_val(&v);
+                add_range_deps(p, c1, r1, c2, r2);
             }
             get_token();
         }
@@ -1324,6 +1403,25 @@ Value eval_factor(void) {
         }
                       break;
 
+        case tokCurrentCell:
+            if (condition_cell) {
+                eval_cell(condition_cell);
+                if (condition_cell->cached.type == TYPE_STR) {
+                    v = make_str(condition_cell->cached.str);
+                    if (condition_cell->cached.str && !v.str) {
+                        v = errOutOfMemory;
+                    }
+                }
+                else {
+                    v = condition_cell->cached;
+                }
+            }
+            else {
+                v.type = TYPE_NULL;
+            }
+            get_token();
+            break;
+
         case tokCellRef: {
             int cc, rr;
             const char* ref = &token[0];
@@ -1344,6 +1442,86 @@ Value eval_factor(void) {
             get_token();  // skip cell reference            
         }
                        break;
+
+        case tokConditionalRangeFunc: {
+            Function* conditional_function = current_function;
+            get_token();
+
+            if (!expect_token(tokLParen)) {
+                v = errExprExpectLParen;
+                break;
+            }
+
+            if (tok_type != tokRange) {
+                v = errExprInvalid;
+                break;
+            }
+
+            int c1, r1, c2, r2;
+            const char* ref = &token[0];
+            parse_range(&ref, &c1, &r1, &c2, &r2);
+            get_token();
+
+            if (tok_type != tokComma) {
+                v = errExprInvalid;
+                break;
+            }
+
+            /* Capture the condition from the source, before token state changes. */
+            const char* condition_start = expr - 1;
+            while (isspace((unsigned char)*condition_start)) condition_start++;
+            get_token();
+
+            /* Capture the condition, including nested function calls. */
+            const char* condition_end = condition_start;
+            int depth = 0;
+            char quote = 0;
+
+            while (*condition_end) {
+                if (quote) {
+                    if (*condition_end == quote) quote = 0;
+                }
+                else if (*condition_end == '\'' || *condition_end == '"') {
+                    quote = *condition_end;
+                }
+                else if (*condition_end == '(') {
+                    depth++;
+                }
+                else if (*condition_end == ')') {
+                    if (depth == 0) break;
+                    depth--;
+                }
+                condition_end++;
+            }
+
+            if (*condition_end != ')') {
+                v = errExprExpectRParen;
+                break;
+            }
+
+            size_t condition_len = (size_t)(condition_end - condition_start);
+            char* condition = malloc(condition_len + 1);
+            if (!condition) {
+                v = errOutOfMemory;
+                break;
+            }
+            memcpy(condition, condition_start, condition_len);
+            condition[condition_len] = 0;
+
+            AccumState acc = { 0, 0, 0 };
+            v = process_conditional_range(
+                c1, r1, c2, r2,
+                condition,
+                &acc,
+                conditional_function->pfn_accum,
+                conditional_function->pfn_eval);
+
+            free(condition);
+            expr = (char*)condition_end + 1;
+            next_char();
+            get_token();
+        }
+        break;
 
         case tokRangeFunc: {
             get_token();
@@ -1366,7 +1544,7 @@ Value eval_factor(void) {
             AccumState acc = { .total = 0, .count = 0 };
             v = process_range(c1, r1, c2, r2, &acc, current_function->pfn_accum, current_function->pfn_eval);
         }
-                         break;
+        break;
 
         case tokScalarFunc: {
             get_token();  // skip function name
@@ -1438,7 +1616,7 @@ scalar_cleanup:
 }
 
 // Evaluate cell and its dependencies, caching the result (lazy for reverse deps)
-void eval_cell(Cell* c) {
+void eval_cell_core(Cell* c) {
     if (!c) {
         return;
     }
@@ -1483,6 +1661,23 @@ void eval_cell(Cell* c) {
 
     c->flags &= MSK_VISITING; // reset visiting
     c->flags &= MSK_DIRTY; // mark evaluated
+}
+
+/* Cell evaluation parses nested formulas, so preserve the caller's lexer. */
+void eval_cell(Cell* c) {
+    TokenType saved_tok_type = tok_type;
+    char saved_token[sizeof(token)];
+    char* saved_expr = expr;
+    char saved_ch = ch;
+    Function* saved_function = current_function;
+
+    memcpy(saved_token, token, sizeof(token));
+    eval_cell_core(c);
+    memcpy(token, saved_token, sizeof(token));
+    tok_type = saved_tok_type;
+    expr = saved_expr;
+    ch = saved_ch;
+    current_function = saved_function;
 }
 
 typedef enum CommandAction {
