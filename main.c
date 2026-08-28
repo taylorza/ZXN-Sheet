@@ -2043,25 +2043,18 @@ int do_save(void) MYCC {
 
 void load_line(char* p) {
     char* sep = strchr(p, ':');
+    CellRefInfo ref;
 
     if (!(sep && sep > p + 1 && isalpha((unsigned char)p[0]))) {
         return;
     }
 
-    int valid_row = 1;
-    for (char* rp = p + 1; rp < sep; ++rp) {
-        if (!isdigit((unsigned char)*rp)) {
-            valid_row = 0;
-            break;
-        }
-    }
-
-    if (!valid_row) {
+    if (!scan_cellref(p, &ref) || p + ref.len != sep) {
         return;
     }
 
-    int col = toupper((unsigned char)p[0]) - 'A';
-    int row = atoi(p + 1) - 1; // convert to zero-based index
+    int col = ref.col;
+    int row = ref.row;
     char* content = sep + 1;
 
     if (col >= 0 && col < MAX_COLS && row >= 0 && row < MAX_ROWS) {
