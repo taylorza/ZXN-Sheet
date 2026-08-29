@@ -1178,6 +1178,10 @@ void set_cell(int c, int r, const char* s) {
                 /* single cell reference */
                 int cc, rr;
                 parse_cellref(&ref, &cc, &rr);
+                if (cc < 0 || cc >= MAX_COLS || rr < 0 || rr >= MAX_ROWS) {
+                    get_token();
+                    continue;
+                }
                 Cell* d = find_cell(cc, rr);
                 if (!d) d = new_cell(cc, rr);
                 if (!d) {
@@ -1190,7 +1194,10 @@ void set_cell(int c, int r, const char* s) {
                 /* range reference */
                 int c1, r1, c2, r2;
                 parse_range(&ref, &c1, &r1, &c2, &r2);
-                add_range_deps(p, c1, r1, c2, r2);
+                if (c1 >= 0 && c1 < MAX_COLS && c2 >= 0 && c2 < MAX_COLS &&
+                    r1 >= 0 && r1 < MAX_ROWS && r2 >= 0 && r2 < MAX_ROWS) {
+                    add_range_deps(p, c1, r1, c2, r2);
+                }
             }
             get_token();
         }
@@ -1426,6 +1433,11 @@ Value eval_factor(void) {
             int cc, rr;
             const char* ref = &token[0];
             parse_cellref(&ref, &cc, &rr);
+            if (cc < 0 || cc >= MAX_COLS || rr < 0 || rr >= MAX_ROWS) {
+                v = errExprInvalid;
+                get_token();
+                break;
+            }
             Cell* c = find_cell(cc, rr);
             if (c) {
                 eval_cell(c);
@@ -1753,10 +1765,12 @@ char* translate_formula_for_paste(const char* formula, int dcol, int drow) {
             if (!ref.col_anchor) new_col += dcol;
             if (!ref.row_anchor) new_row += drow;
 
-            if (new_col < 0) new_col = 0;
-            if (new_col >= MAX_COLS) new_col = MAX_COLS - 1;
-            if (new_row < 0) new_row = 0;
-            if (new_row >= MAX_ROWS) new_row = MAX_ROWS - 1;
+            if (new_col < 0 || new_col >= MAX_COLS ||
+                new_row < 0 || new_row >= MAX_ROWS) {
+                free(out);
+                error(errExprInvalid.str);
+                return NULL;
+            }
 
             if (ref.col_anchor) out[j++] = '$';
             out[j++] = (char)('A' + new_col);
