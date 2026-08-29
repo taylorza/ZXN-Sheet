@@ -35,6 +35,7 @@ Value errExprCyclicRef = { .type = TYPE_ERROR };
 Value errExprExpectLParen = { .type = TYPE_ERROR };
 Value errExprExpectRParen = { .type = TYPE_ERROR };
 Value errExprExpectNumeric = { .type = TYPE_ERROR };
+Value errExprNA = { .type = TYPE_ERROR };
 Value errOutOfMemory = { .type = TYPE_ERROR };
 
 // Forward declarations
@@ -91,6 +92,7 @@ typedef enum {
     tokPlus, tokMinus, tokMul, tokDiv, tokMod, tokPow, tokLParen, tokRParen, tokComma, tokEnd,
     tokScalarFunc,
     tokRangeFunc, tokConditionalRangeFunc,
+    tokLookupFunc,
 
     tokError, 
 } TokenType;
@@ -140,6 +142,7 @@ Value dec2hex_eval(void* state);
 Value hex2dec_eval(void* state);
 
 Value if_eval(void* state);
+Value lookup_eval(void* state);
 
 Function functions[] = {
     { "SUM", sum_range, sum_eval, tokRangeFunc, 1, 1},
@@ -170,6 +173,7 @@ Function functions[] = {
     { "DEC2HEX", NULL, dec2hex_eval, tokScalarFunc, 1, 1},
     { "HEX2DEC", NULL, hex2dec_eval, tokScalarFunc, 1, 1},
     { "IF", NULL, if_eval, tokScalarFunc, 3, 3},
+    { "LOOKUP", NULL, lookup_eval, tokLookupFunc, 2, 3},
 
     { NULL, NULL }  /* sentinel */
 };
@@ -916,6 +920,99 @@ Value if_eval(void* state) {
     }
     return v;
 }
+
+typedef struct {
+    Value value;
+    int range1_c1;
+    int range1_r1;
+    int range1_c2;
+    int range1_r2;
+    int range2_c1;
+    int range2_r1;
+    int range2_c2;
+    int range2_r2;
+    uint8_t has_second_range;
+} LookupArgs;
+
+uint8_t lookup_text_equal(const char* left, const char* right) {
+    if (!left || !right) return left == right;
+    while (*left && *right) {
+        if (toupper((unsigned char)*left) != toupper((unsigned char)*right)) {
+            return 0;
+        }
+        left++;
+        right++;
+    }
+    return *left == *right;
+}
+
+Value lookup_copy_value(Value source) {
+    Value result = source;
+    if (source.type == TYPE_STR || source.type == TYPE_TEXT) {
+        result = make_str(source.str);
+        if (source.str && !result.str) result = errOutOfMemory;
+    }
+    return result;
+}
+
+Value lookup_eval(void* state) {
+    LookupArgs* args = (LookupArgs*)state;
+    Cell empty = { 0 };
+    Value result = errExprNA;
+    int range2_height = args->range2_r2 - args->range2_r1 + 1;
+    int index = 0;
+
+    for (int cc = args->range1_c1; cc <= args->range1_c2; cc++) {
+        for (int rr = args->range1_r1; rr <= args->range1_r2; rr++) {
+            Cell* cell = find_cell(cc, rr);
+            if (!cell) {
+                empty.col = cc;
+                empty.row = rr;
+                cell = &empty;
+            }
+            else {
+                eval_cell(cell);
+            }
+
+            Value candidate = cell->cached;
+            uint8_t matched = 0;
+
+            if (args->value.type == TYPE_NUM && candidate.type == TYPE_NUM) {
+                matched = args->value.num == candidate.num;
+            }
+            else if (is_str_value(args->value) && is_str_value(candidate)) {
+                matched = lookup_text_equal(args->value.str, candidate.str);
+            }
+
+            if (matched) {
+                if (args->has_second_range) {
+                    int range2_size = (args->range2_c2 - args->range2_c1 + 1) * range2_height;
+                    if (index < range2_size) {
+                        int range2_col = args->range2_c1 + index / range2_height;
+                        int range2_row = args->range2_r1 + index % range2_height;
+                        Cell* result_cell = find_cell(range2_col, range2_row);
+                        if (!result_cell) {
+                            empty.col = range2_col;
+                            empty.row = range2_row;
+                            result_cell = &empty;
+                        }
+                        else {
+                            eval_cell(result_cell);
+                        }
+                        result = lookup_copy_value(result_cell->cached);
+                    }
+                }
+                else {
+                    result = lookup_copy_value(candidate);
+                }
+                return result;
+            }
+
+            index++;
+        }
+    }
+    return result;
+}
     
 
 void set_range_dep(void* state, Cell* cell) {
@@ -1479,6 +1576,67 @@ Value eval_factor(void) {
             expr = (char*)condition_end + 1;
             next_char();
             get_token();
+        }
+        break;
+
+        case tokLookupFunc: {
+            LookupArgs lookup;
+            memset(&lookup, 0, sizeof(lookup));
+            Function* lookup_function = current_function;
+
+            get_token();
+            if (!expect_token(tokLParen)) {
+                v = errExprExpectLParen;
+                break;
+            }
+
+            {
+                Value value = eval_expr();
+                lookup.value = value;
+            }
+            if (lookup.value.type == TYPE_ERROR) {
+                v = lookup.value;
+                break;
+            }
+            if (!expect_token(tokComma) || tok_type != tokRange) {
+                v = errInvalidArg;
+                free_val(&lookup.value);
+                break;
+            }
+
+            {
+                const char* ref = &token[0];
+                parse_range(&ref, &lookup.range1_c1, &lookup.range1_r1,
+                    &lookup.range1_c2, &lookup.range1_r2);
+            }
+            get_token();
+
+            if (tok_type == tokComma) {
+                lookup.has_second_range = 1;
+                get_token();
+                if (tok_type != tokRange) {
+                    v = errInvalidArg;
+                    goto lookup_cleanup;
+                }
+                {
+                    const char* ref = &token[0];
+                    parse_range(&ref, &lookup.range2_c1, &lookup.range2_r1,
+                        &lookup.range2_c2, &lookup.range2_r2);
+                }
+                get_token();
+            }
+
+            if (!expect_token(tokRParen)) {
+                v = errExprExpectRParen;
+                goto lookup_cleanup;
+            }
+            {
+                Value result = lookup_function->pfn_eval(&lookup);
+                v = result;
+            }
+
+lookup_cleanup:
+            free_val(&lookup.value);
         }
         break;
 
@@ -2406,6 +2564,7 @@ int main(int argc, char* argv[]) {
     errExprExpectLParen.str = "Expected '('";
     errExprExpectRParen.str = "Expected ')'";
     errExprExpectNumeric.str = "Expected numeric value";
+    errExprNA.str = "#N/A";
     errOutOfMemory.str = "Out of memory";
 
     init();
