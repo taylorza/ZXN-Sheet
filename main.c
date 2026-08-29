@@ -35,7 +35,6 @@ Value errExprCyclicRef = { .type = TYPE_ERROR };
 Value errExprExpectLParen = { .type = TYPE_ERROR };
 Value errExprExpectRParen = { .type = TYPE_ERROR };
 Value errExprExpectNumeric = { .type = TYPE_ERROR };
-Value errExprNA = { .type = TYPE_ERROR };
 Value errOutOfMemory = { .type = TYPE_ERROR };
 
 // Forward declarations
@@ -52,8 +51,8 @@ typedef struct HNode {
     struct HNode* next;
 } HNode;
 
-uint8_t is_str_value(Value v) {
-    return v.type == TYPE_STR || v.type == TYPE_TEXT;
+uint8_t is_str_value(Value *v) {
+    return v->type == TYPE_STR || v->type == TYPE_TEXT;
 }
 
 HNode* hash_table[CELL_TBL_SIZE] = { 0 }; // hash table for cells
@@ -875,7 +874,7 @@ Value dec2bin_eval(void* state) {
 
 Value bin2dec_eval(void* state) {
     Value arg = *(Value*)state;
-    if (!is_str_value(arg)) return errInvalidArg;
+    if (!is_str_value(&arg)) return errInvalidArg;
 
     int n;
     if (!parse_int_base(arg.str, 2, &n)) return errExprInvalid;
@@ -896,7 +895,7 @@ Value dec2hex_eval(void* state) {
 
 Value hex2dec_eval(void* state) {
     Value arg = *(Value*)state;
-    if (!is_str_value(arg)) return errInvalidArg;
+    if (!is_str_value(&arg)) return errInvalidArg;
 
     int n;
     if (!parse_int_base(arg.str, 16, &n)) return errExprInvalid;
@@ -907,10 +906,19 @@ Value hex2dec_eval(void* state) {
 
 Value if_eval(void* state) {
     Value* args = (Value*)state;
-    if (args[0].type != TYPE_NUM) {
-        return errExprExpectNumeric;
+    uint8_t condition_met = 0;
+
+    if (args[0].type == TYPE_NULL) {
+        condition_met = 2; // return false branch
+    } else if (args[0].type == TYPE_NUM) {
+        condition_met = args[0].num ? 1 : 2; // return true or false branch
+    } else if (is_str_value(&args[0])) {
+        condition_met = args[0].str && *args[0].str ? 1 : 2; // non-empty string is true
+    } else {
+        return errExprInvalid; // unsupported type for condition
     }
-    Value v = args[args[0].num ? 1 : 2]; // return true or false branch
+
+    Value v = args[condition_met];
     if (v.type == TYPE_STR) {
         Value copy = make_str(v.str);
         if (v.str != NULL && copy.str == NULL) {
@@ -948,7 +956,7 @@ uint8_t lookup_text_equal(const char* left, const char* right) {
 
 Value lookup_copy_value(Value source) {
     Value result = source;
-    if (source.type == TYPE_STR || source.type == TYPE_TEXT) {
+    if (is_str_value(&source)) {
         result = make_str(source.str);
         if (source.str && !result.str) result = errOutOfMemory;
     }
@@ -958,7 +966,7 @@ Value lookup_copy_value(Value source) {
 Value lookup_eval(void* state) {
     LookupArgs* args = (LookupArgs*)state;
     Cell empty = { 0 };
-    Value result = errExprNA;
+    Value result = {.type = TYPE_NULL};    
     int range2_height = args->range2_r2 - args->range2_r1 + 1;
     int index = 0;
 
@@ -980,7 +988,7 @@ Value lookup_eval(void* state) {
             if (args->value.type == TYPE_NUM && candidate.type == TYPE_NUM) {
                 matched = args->value.num == candidate.num;
             }
-            else if (is_str_value(args->value) && is_str_value(candidate)) {
+            else if (is_str_value(&args->value) && is_str_value(&candidate)) {
                 matched = lookup_text_equal(args->value.str, candidate.str);
             }
 
@@ -1288,7 +1296,7 @@ Value eval_expr(void) {
         }
         else {
             int cmp = 0;
-            if (is_str_value(v) && is_str_value(v2)) {
+            if (is_str_value(&v) && is_str_value(&v2)) {
                 cmp = strcmp(v.str, v2.str);
             }
             else {
@@ -1333,15 +1341,15 @@ Value eval_expr1(void) {
         get_token();  // skip operator
         Value v2 = eval_term();
         if (v2.type == TYPE_ERROR) return v2; // propagate error
-        if (op == tokPlus && (is_str_value(v) || is_str_value(v2))) {
+        if (op == tokPlus && (is_str_value(&v) || is_str_value(&v2))) {
             char buf[CELL_W] = { 0 }, tmp1[CELL_W] = { 0 }, tmp2[CELL_W] = { 0 };
             
-            if (is_str_value(v)) {
+            if (is_str_value(&v)) {
                 if (v.str) strncpy(tmp1, v.str, CELL_W - 1);
             }
             else snprintf(tmp1, sizeof(tmp1), "%g", v.num);
 
-            if (is_str_value(v2)) {
+            if (is_str_value(&v2)) {
                 if (v2.str) strncpy(tmp2, v2.str, CELL_W - 1);
             }
             else snprintf(tmp2, sizeof(tmp2), "%g", v2.num);
@@ -2031,7 +2039,7 @@ uint8_t get_overlapped_text(int target_col, int row, char* out, int out_size) {
 
     eval_cell(src);
     Value v = src->cached;
-    if (!(v.type == TYPE_STR || v.type == TYPE_TEXT)) return 0;
+    if (!is_str_value(&v)) return 0;
 
     const char* text = v.str;
     if (!text) return 0;
@@ -2564,7 +2572,6 @@ int main(int argc, char* argv[]) {
     errExprExpectLParen.str = "Expected '('";
     errExprExpectRParen.str = "Expected ')'";
     errExprExpectNumeric.str = "Expected numeric value";
-    errExprNA.str = "#N/A";
     errOutOfMemory.str = "Out of memory";
 
     init();
