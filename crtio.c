@@ -166,33 +166,18 @@ void cls(void) MYCC {
     cy=0;
 }
 
-void scroll_up(void) {
-    memmove(screen, screen + (SCREEN_WIDTH<<1), (SCREEN_WIDTH*(SCREEN_HEIGHT-1)<<1));    
-}
-
 void putch(char ch) MYCC {
     if (ch == NL) {
         if (cy < SCREEN_HEIGHT-1) {
             ++cy;            
-        } else {
-            scroll_up();
         }
         cx=0;
         return;
     }
     if (ch < 32 || ch > 128) ch=128;
 
-    if (cx > SCREEN_WIDTH-1) {        
-        if (cy < SCREEN_HEIGHT-1) {
-            ++cy;            
-        } else {
-            scroll_up();
-        }
-        cx = 0;
-    }
-    if (cy >= SCREEN_HEIGHT-1) {
-        
-    }
+    if (cx == SCREEN_WIDTH-1) return;
+
     char * p = screen+(((cy*SCREEN_WIDTH) + cx) << 1);
     *p++ = ch - 32;
     *p = attr;
