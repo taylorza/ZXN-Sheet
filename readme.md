@@ -102,6 +102,11 @@ Add all values in A1, A2, B1 and B2
 | `COUNT` | Returns how many cells contain values in a range: =count(A1:B3) |
 | `MIN` | Returns the **smallest** numeric value in a range: =min(A1:B3) |
 | `MAX` | Return the **largest** numeric value in a range: =max(A1:B3) |
+| `COUNTIF` | Returns the number of cells in a range that meet a specified condition: =countif(A1:B3, "?>5") |
+| `SUMIF` | Returns the sum of cells in a range that meet a specified condition: =sumif(A1:B3, "?>5") |
+| `LOOKUP` | The single range version finds and returns value in a range: =lookup(A1, B1:B10) |
+| `LOOKUP` | The double range version finds a value in a range and returns the value at the corresponding index in the second range: =lookup(A1, B1:B10, C1:C10) |
+
 
 ### Simple functions
 These take numeric, string literals or cell references to either type.
@@ -148,6 +153,10 @@ Convert a binary string to a decimal value
 | `BIN2DEC` | Binary string to a decimal value |
 | `DEC2HEX` | Decimal value to hexadecimal string |
 | `HEX2DEC` | Hexadecimal string to a decimal value |
+| `LEN` | Returns the length of a string |
+| `LEFT` | Returns the leftmost characters of a string |
+| `RIGHT` | Returns the rightmost characters of a string |
+| `MID` | Returns a substring from a string |
 
 ### Complex function
 Complex functions take more than one argument.

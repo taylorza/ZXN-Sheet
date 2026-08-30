@@ -35,6 +35,7 @@ Value errExprCyclicRef = { .type = TYPE_ERROR };
 Value errExprExpectLParen = { .type = TYPE_ERROR };
 Value errExprExpectRParen = { .type = TYPE_ERROR };
 Value errExprExpectNumeric = { .type = TYPE_ERROR };
+Value errExprExpectString = { .type = TYPE_ERROR };
 Value errOutOfMemory = { .type = TYPE_ERROR };
 
 // Forward declarations
@@ -172,6 +173,10 @@ Function functions[] = {
     { "DEC2HEX", NULL, dec2hex_eval, tokScalarFunc, 1, 1},
     { "HEX2DEC", NULL, hex2dec_eval, tokScalarFunc, 1, 1},
     { "IF", NULL, if_eval, tokScalarFunc, 3, 3},
+    { "LEN", NULL, len_eval, tokScalarFunc, 1, 1},
+    { "LEFT", NULL, left_eval, tokScalarFunc, 2, 2},
+    { "RIGHT", NULL, right_eval, tokScalarFunc, 2, 2},
+    { "MID", NULL, mid_eval, tokScalarFunc, 3, 3},
     { "LOOKUP", NULL, lookup_eval, tokLookupFunc, 2, 3},
 
     { NULL, NULL }  /* sentinel */
@@ -216,6 +221,19 @@ void status(const char* fmt, ...) {
     set_cursor_pos(0, STATUS_LINE_ROW);
     prints(ln); clreol();
     set_cursor_pos(ox, oy);
+}
+
+/* Case-insensitive text comparison */
+uint8_t cmp_text_equal(const char* left, const char* right) {
+    if (!left || !right) return left == right;
+    while (*left && *right) {
+        if (toupper((unsigned char)*left) != toupper((unsigned char)*right)) {
+            return 0;
+        }
+        left++;
+        right++;
+    }
+    return *left == *right;
 }
 
 float value_to_num(Value v) {
@@ -929,6 +947,84 @@ Value if_eval(void* state) {
     return v;
 }
 
+Value len_eval(void* state) {
+    Value arg = *(Value*)state;
+    if (!is_str_value(&arg)) return errExprExpectString;
+    int length = arg.str ? strlen(arg.str) : 0;
+    Value v = make_num((float)length);
+    return v;
+}
+
+Value left_eval(void* state) {
+    Value* args = (Value*)state;
+    if (!is_str_value(&args[0]) || args[1].type != TYPE_NUM) return errExprInvalid;
+
+    int n = (int)args[1].num;
+    if (n < 0) return errExprInvalid;
+
+    char* s = args[0].str ? args[0].str : "";
+    size_t len = strlen(s);
+    if ((size_t)n > len) n = (int)len;
+
+    char* result_str = malloc(n + 1);
+    if (!result_str) return errOutOfMemory;
+
+    strncpy(result_str, s, n);
+    result_str[n] = '\0';
+
+    Value v = make_str(result_str);
+    free(result_str);
+    return v;
+}
+
+Value right_eval(void* state) {
+    Value* args = (Value*)state;
+    if (!is_str_value(&args[0]) || args[1].type != TYPE_NUM) return errExprInvalid;
+
+    int n = (int)args[1].num;
+    if (n < 0) return errExprInvalid;
+
+    char* s = args[0].str ? args[0].str : "";
+    size_t len = strlen(s);
+    if ((size_t)n > len) n = (int)len;
+
+    char* result_str = malloc(n + 1);
+    if (!result_str) return errOutOfMemory;
+
+    strncpy(result_str, s + len - n, n);
+    result_str[n] = '\0';
+
+    Value v = make_str(result_str);
+    free(result_str);
+    return v;
+}
+
+Value mid_eval(void* state) {
+    Value v = {.type = TYPE_NULL};
+
+    Value* args = (Value*)state;
+    if (!is_str_value(&args[0]) || args[1].type != TYPE_NUM || args[2].type != TYPE_NUM) return errExprInvalid;
+    int start = (int)args[1].num;
+    int length = (int)args[2].num;
+    if (start < 1 || length < 0) return errExprInvalid;
+    char* s = args[0].str ? args[0].str : "";
+    size_t len = strlen(s);
+    
+    if ((size_t)(start - 1) > len) return v; // start is beyond the end of the string
+
+    if ((size_t)length > len - (start - 1)) length = (int)(len - (start - 1));
+
+    char* result_str = malloc(length + 1);
+    if (!result_str) return errOutOfMemory;
+
+    strncpy(result_str, s + start - 1, length);
+    result_str[length] = '\0';
+
+    v = make_str(result_str);
+    free(result_str);
+    return v;
+}
+
 typedef struct {
     Value value;
     int range1_c1;
@@ -941,18 +1037,6 @@ typedef struct {
     int range2_r2;
     uint8_t has_second_range;
 } LookupArgs;
-
-uint8_t lookup_text_equal(const char* left, const char* right) {
-    if (!left || !right) return left == right;
-    while (*left && *right) {
-        if (toupper((unsigned char)*left) != toupper((unsigned char)*right)) {
-            return 0;
-        }
-        left++;
-        right++;
-    }
-    return *left == *right;
-}
 
 Value lookup_copy_value(Value source) {
     Value result = source;
@@ -989,7 +1073,7 @@ Value lookup_eval(void* state) {
                 matched = args->value.num == candidate.num;
             }
             else if (is_str_value(&args->value) && is_str_value(&candidate)) {
-                matched = lookup_text_equal(args->value.str, candidate.str);
+                matched = cmp_text_equal(args->value.str, candidate.str);
             }
 
             if (matched) {
@@ -2571,7 +2655,8 @@ int main(int argc, char* argv[]) {
     errExprCyclicRef.str = "Cyclic reference";
     errExprExpectLParen.str = "Expected '('";
     errExprExpectRParen.str = "Expected ')'";
-    errExprExpectNumeric.str = "Expected numeric value";
+    errExprExpectNumeric.str = "Expected numeric";
+    errExprExpectString.str = "Expected string";
     errOutOfMemory.str = "Out of memory";
 
     init();
