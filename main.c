@@ -17,7 +17,7 @@
 #include "crtio.h"
 #include "sheet.h"
 
-#define VERSION "0.4"
+#define VERSION "0.4a"
 
 typedef enum { REDRAW_ALL, REDRAW_CONTENT, REDRAW_CURSOR } REDRAW_MODE;
 
@@ -1363,19 +1363,42 @@ Value eval_expr(void) {
 
         if (v2.type == TYPE_ERROR) return v2; // propagate error
 
-        if (v.type == TYPE_NULL && v2.type == TYPE_NULL) {
-            res = make_num(1); // nulls are equal            
+        if (v.type == TYPE_NULL || v2.type == TYPE_NULL) {
+            res = make_num((float)(v.type == TYPE_NULL && v2.type == TYPE_NULL));
         }
-        else {
+        else if (is_str_value(&v) || is_str_value(&v2)) {
             int cmp = 0;
             if (is_str_value(&v) && is_str_value(&v2)) {
                 cmp = strcmp(v.str, v2.str);
             }
             else {
-                float n1 = value_to_num(v);
-                float n2 = value_to_num(v2);
-                cmp = (n1 < n2 ? -1 : (n1 > n2 ? 1 : 0));
+                cmp = 1;
             }
+            switch (op) {
+                case tokEq:
+                    res = make_num((float)(cmp == 0));
+                    break;
+                case tokNe:
+                    res = make_num((float)(cmp != 0));
+                    break;
+                case tokLt:
+                    res = make_num((float)(cmp < 0));
+                    break;
+                case tokLe:
+                    res = make_num((float)(cmp <= 0));
+                    break;
+                case tokGt:
+                    res = make_num((float)(cmp > 0));
+                    break;
+                case tokGe:
+                    res = make_num((float)(cmp >= 0));
+                    break;
+            }
+        }
+        else {
+            float n1 = value_to_num(v);
+            float n2 = value_to_num(v2);
+            int cmp = (n1 < n2 ? -1 : (n1 > n2 ? 1 : 0));
             switch (op) {
                 case tokEq:
                     res = make_num((float)(cmp == 0));
