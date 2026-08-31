@@ -555,6 +555,16 @@ void remove_revdep(Cell* c, Cell* dep) {
     }
 }
 
+void remove_dep(Cell* owner, Cell* dep) {
+    Dep** pp = &owner->deps;
+    while (*pp && (*pp)->cell != dep) pp = &(*pp)->next;
+    if (*pp) {
+        Dep* t = *pp; *pp = t->next;
+        remove_revdep(dep, owner);
+        free(t);
+    }
+}
+
 void remove_deps(Cell* c) {
     Dep* d = c->deps;
     while (d) {
@@ -565,21 +575,11 @@ void remove_deps(Cell* c) {
     c->deps = NULL;
 }
 
-#ifdef MEMDBG
-void free_deplist(Dep *d) {
-    while (d) {
-        Dep* t = d; d = d->next;
-        free(t);
-    }        
-}
-
 void remove_cell(Cell* cell) {
     int h = (cell->col + (cell->row * 257)) % CELL_TBL_SIZE;
     HNode* node = hash_table[h];
     HNode* prev = NULL;
 
-    free_deplist(cell->deps);
-    free_deplist(cell->revdeps);
     while (node) {
         if (node->cell == cell) {
             if (prev) {
@@ -599,10 +599,15 @@ void remove_cell(Cell* cell) {
 void free_cell(Cell* c) {
     if (c->content) free(c->content);
     free_val(&c->cached);
+    remove_deps(c);
+    while (c->revdeps) {
+        remove_dep(c->revdeps->cell, c);
+    }
     remove_cell(c);
     free(c);
 }
 
+#ifdef MEMDBG
 void free_cells(void) {
     for (int i = 0; i < CELL_TBL_SIZE; i++) {
         HNode* node = hash_table[i];
@@ -1238,6 +1243,10 @@ void set_cell(int c, int r, const char* s) MYCC {
 
     if (txt_len == 0) {
         reset_cell_state(p);
+        if (!p->revdeps) {            
+            free_cell(p);
+            return;
+        }
         goto reevaluate;
     }
 
