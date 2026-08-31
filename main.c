@@ -39,12 +39,12 @@ Value errExprExpectString = { .type = TYPE_ERROR };
 Value errOutOfMemory = { .type = TYPE_ERROR };
 
 // Forward declarations
-Value  make_num(float v);
-Value  make_str(const char* s);
+Value  make_num(float v) MYCC;
+Value  make_str(const char* s) MYCC;
 
-void free_val(Value *v);
-void error(const char* fmt, ...);
-void status(const char* fmt, ...);
+void free_val(Value *v) MYCC;
+void error(const char* fmt, ...) MYCC;
+void status(const char* fmt, ...) MYCC;
 uint8_t get_overlapped_text(int target_col, int row, char* out, int out_size);
 
 typedef struct HNode {
@@ -188,7 +188,7 @@ char* expr;
 char ch;
 Function* current_function;
 
-void error(const char* fmt, ...) {
+void error(const char* fmt, ...) MYCC {
     uint8_t ox, oy;
 
     has_error = 1;
@@ -207,7 +207,7 @@ void error(const char* fmt, ...) {
     if (fmt == errOutOfMemory.str) getch();
 }
 
-void status(const char* fmt, ...) {
+void status(const char* fmt, ...) MYCC {
     uint8_t ox, oy;
 
     get_cursor_pos(&ox, &oy);
@@ -224,7 +224,7 @@ void status(const char* fmt, ...) {
 }
 
 /* Case-insensitive text comparison */
-uint8_t cmp_text_equal(const char* left, const char* right) {
+uint8_t cmp_text_equal(const char* left, const char* right) MYCC {
     if (!left || !right) return left == right;
     while (*left && *right) {
         if (toupper((unsigned char)*left) != toupper((unsigned char)*right)) {
@@ -236,7 +236,7 @@ uint8_t cmp_text_equal(const char* left, const char* right) {
     return *left == *right;
 }
 
-float value_to_num(Value v) {
+float value_to_num(Value v) MYCC {
     if (v.type == TYPE_NUM) return v.num;
     if (!v.str) return 0;
 
@@ -251,7 +251,7 @@ float value_to_num(Value v) {
     return 0;
 }
 
-uint8_t parse_int_base(const char* s, int base, int* out) {
+uint8_t parse_int_base(const char* s, int base, int* out) MYCC {
     if (!s || !*s) return 0;
 
     int sign = 1;
@@ -290,7 +290,7 @@ uint8_t parse_int_base(const char* s, int base, int* out) {
     return 1;
 }
 
-void next_char(void) {
+void next_char(void) MYCC {
     ch = *expr;
     if (ch == 0) return;
     ++expr;
@@ -304,11 +304,11 @@ typedef struct {
     size_t len;
 } CellRefInfo;
 
-uint8_t is_cellref_token_char(char c) {
+uint8_t is_cellref_token_char(char c) MYCC {
     return (uint8_t)(isalpha((unsigned char)c) || isdigit((unsigned char)c) || c == '$');
 }
 
-uint8_t scan_cellref(const char* s, CellRefInfo* out) {
+uint8_t scan_cellref(const char* s, CellRefInfo* out) MYCC {
     const char* p = s;
     int parsed_col;
     int parsed_row = 0;
@@ -358,8 +358,8 @@ uint8_t scan_cellref(const char* s, CellRefInfo* out) {
     return 1;
 }
 
-void parse_cellref(const char** sp, int* col, int* row);
-void parse_range(const char** sp, int* from_col, int* from_row, int* to_col, int* to_row);
+void parse_cellref(const char** sp, int* col, int* row) MYCC;
+void parse_range(const char** sp, int* from_col, int* from_row, int* to_col, int* to_row) MYCC;
 
 uint8_t is_cellref(const char* s) {
     CellRefInfo ref;
@@ -517,17 +517,17 @@ static int clipboard_row = -1;
 static Cell* condition_cell = NULL;
 
 /* Helpers for Value */
-Value make_num(float v) {
+Value make_num(float v) MYCC {
     Value x; x.type = TYPE_NUM; x.num = v; return x;
 }
 
-Value make_str(const char* s) {
+Value make_str(const char* s) MYCC {
     Value x; x.type = TYPE_STR;
     if (s) x.str = strdup(s); else x.str = NULL;
     return x;
 }
 
-void free_val(Value *v) {
+void free_val(Value *v) MYCC {
     if (v->type == TYPE_STR && v->str) {
         free((void*)v->str);
     }
@@ -669,7 +669,7 @@ Value process_conditional_range(
     PFN_ACCUM pfn_accum,
     PFN_EVAL pfn_eval);
 
-void parse_cellref(const char** sp, int* col, int* row) {
+void parse_cellref(const char** sp, int* col, int* row) MYCC {
     CellRefInfo ref;
     *col = -1;
     *row = -1;
@@ -683,7 +683,7 @@ void parse_cellref(const char** sp, int* col, int* row) {
     *row = ref.row;
 }
 
-void parse_range(const char** sp, int* from_col, int* from_row, int* to_col, int* to_row) {
+void parse_range(const char** sp, int* from_col, int* from_row, int* to_col, int* to_row) MYCC {
     int c1, r1, c2, r2;
     parse_cellref(sp, &c1, &r1);
     if (**sp == ':') (*sp)++;
@@ -1106,18 +1106,6 @@ Value lookup_eval(void* state) {
     return result;
 }
     
-
-void set_range_dep(void* state, Cell* cell) {
-    Cell* root = (Cell*)state;
-    if (cell->flags & FLG_EMPTY) {
-        cell = new_cell(cell->col, cell->row);
-        if (cell == NULL) {
-            return;
-        }
-    }
-    add_dep(root, cell);
-}
-
 void add_range_deps(Cell* root, int c1, int r1, int c2, int r2) {
     for (int cc = c1; cc <= c2; cc++) {
         for (int rr = r1; rr <= r2; rr++) {
@@ -1203,7 +1191,7 @@ Value process_conditional_range(
     return result;
 }
 
-void reset_cell_state(Cell* p) {
+void reset_cell_state(Cell* p) MYCC {
     free_val(&p->cached);
     p->content = NULL;
     p->flags = 0;
@@ -1211,7 +1199,7 @@ void reset_cell_state(Cell* p) {
 }
 
 /* Assignment: text may be formula, pure-number, or string */
-void set_cell(int c, int r, const char* s) {
+void set_cell(int c, int r, const char* s) MYCC {
     Cell* p = find_cell(c, r);
     char* txtbuf = NULL;
 
