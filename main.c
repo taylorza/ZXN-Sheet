@@ -674,6 +674,29 @@ Value process_conditional_range(
     PFN_ACCUM pfn_accum,
     PFN_EVAL pfn_eval);
 
+void compare_values(Value* result, Value* left, Value* right, TokenType op) {
+    int cmp;
+
+    if (left->type == TYPE_NULL || right->type == TYPE_NULL) {
+        *result = make_num((float)(left->type == TYPE_NULL && right->type == TYPE_NULL));
+        return;
+    }
+
+    if (is_str_value(left) || is_str_value(right)) {
+        cmp = is_str_value(left) && is_str_value(right) ? strcmp(left->str, right->str) : 1;
+    }
+    else {
+        float n1 = value_to_num(*left);
+        float n2 = value_to_num(*right);
+        cmp = n1 < n2 ? -1 : n1 > n2 ? 1 : 0;
+    }
+
+    *result = make_num((float)(
+        op == tokEq ? cmp == 0 : op == tokNe ? cmp != 0 :
+        op == tokLt ? cmp < 0 : op == tokLe ? cmp <= 0 :
+        op == tokGt ? cmp > 0 : cmp >= 0));
+}
+
 void parse_cellref(const char** sp, int* col, int* row) MYCC {
     CellRefInfo ref;
     *col = -1;
@@ -785,105 +808,64 @@ Value best_eval(void* state) {
     return v;
 }
 
-Value sin_eval(void* state) {
+typedef enum {
+    UNARY_SIN, UNARY_COS, UNARY_TAN, UNARY_ASIN, UNARY_ACOS, UNARY_ATAN,
+    UNARY_ABS, UNARY_CEIL, UNARY_FLOOR, UNARY_ROUND, UNARY_TRUNC,
+    UNARY_SQRT, UNARY_EXP, UNARY_LOG, UNARY_LOG10, UNARY_LOG2
+} UnaryOp;
+
+Value eval_unary_num(void* state, UnaryOp op) {
     Value arg = *(Value*)state;
-    if (arg.type != TYPE_NUM) return errExprExpectNumeric;
-    Value v = make_num(sinf(arg.num));
+    Value v;
+    if (arg.type != TYPE_NUM) {
+        v = errExprExpectNumeric;
+        return v;
+    }
+
+    switch (op) {
+        case UNARY_SIN: v = make_num(sinf(arg.num)); break;
+        case UNARY_COS: v = make_num(cosf(arg.num)); break;
+        case UNARY_TAN: v = make_num(tanf(arg.num)); break;
+        case UNARY_ASIN: v = make_num(asinf(arg.num)); break;
+        case UNARY_ACOS: v = make_num(acosf(arg.num)); break;
+        case UNARY_ATAN: v = make_num(atanf(arg.num)); break;
+        case UNARY_ABS: v = make_num(fabsf(arg.num)); break;
+        case UNARY_CEIL: v = make_num(ceilf(arg.num)); break;
+        case UNARY_FLOOR: v = make_num(floorf(arg.num)); break;
+        case UNARY_ROUND: v = make_num(arg.num >= 0 ? floorf(arg.num + 0.5f) : ceilf(arg.num - 0.5f)); break;
+        case UNARY_TRUNC: v = make_num(truncf(arg.num)); break;
+        case UNARY_SQRT: v = make_num(sqrtf(arg.num)); break;
+        case UNARY_EXP: v = make_num(expf(arg.num)); break;
+        case UNARY_LOG: v = make_num(logf(arg.num)); break;
+        case UNARY_LOG10: v = make_num(log10f(arg.num)); break;
+        case UNARY_LOG2: v = make_num(log2f(arg.num)); break;
+        default: v = errExprInvalid; break;
+    }
     return v;
 }
 
-Value cos_eval(void* state) {
-    Value arg = *(Value*)state;
-    if (arg.type != TYPE_NUM) return errExprExpectNumeric;
-    Value v = make_num(cosf(arg.num));
-    return v;
-}
-Value tan_eval(void* state) {
-    Value arg = *(Value*)state;
-    if (arg.type != TYPE_NUM) return errExprExpectNumeric;
-    Value v = make_num(tanf(arg.num));
-    return v;
-}
-Value asin_eval(void* state) {
-    Value arg = *(Value*)state;
-    if (arg.type != TYPE_NUM) return errExprExpectNumeric;
-    Value v = make_num(asinf(arg.num));
-    return v;
-}
-Value acos_eval(void* state) {
-    Value arg = *(Value*)state;
-    if (arg.type != TYPE_NUM) return errExprExpectNumeric;
-    Value v = make_num(acosf(arg.num));
-    return v;
-}
-Value atan_eval(void* state) {
-    Value arg = *(Value*)state;
-    if (arg.type != TYPE_NUM) return errExprExpectNumeric;
-    Value v = make_num(atanf(arg.num));
-    return v;
-}
+#define UNARY_EVAL(name, operation) \
+    Value name(void* state) { \
+        Value v = eval_unary_num(state, operation); \
+        return v; \
+    }
 
-Value abs_eval(void* state) {
-    Value arg = *(Value*)state;
-    if (arg.type != TYPE_NUM) return errExprExpectNumeric;
-    Value v = make_num(fabsf(arg.num));
-    return v;
-}
-Value ceil_eval(void* state) {
-    Value arg = *(Value*)state;
-    if (arg.type != TYPE_NUM) return errExprExpectNumeric;
-    Value v = make_num(ceilf(arg.num));
-    return v;
-}
-Value floor_eval(void* state) {
-    Value arg = *(Value*)state;
-    if (arg.type != TYPE_NUM) return errExprExpectNumeric;
-    Value v = make_num(floorf(arg.num));
-    return v;
-}
-Value round_eval(void* state) {
-    Value arg = *(Value*)state;
-    if (arg.type != TYPE_NUM) return errExprExpectNumeric;
-    Value v = make_num(arg.num >= 0 ? floorf(arg.num + 0.5f) : ceilf(arg.num - 0.5f));
-    return v;
-}
-Value trunc_eval(void* state) {
-    Value arg = *(Value*)state;
-    if (arg.type != TYPE_NUM) return errExprExpectNumeric;
-    Value v = make_num(truncf(arg.num));
-    return v;
-}
-
-Value sqrt_eval(void* state) {
-    Value arg = *(Value*)state;
-    if (arg.type != TYPE_NUM) return errExprExpectNumeric;
-    Value v = make_num(sqrtf(arg.num));
-    return v;
-}
-Value exp_eval(void* state) {
-    Value arg = *(Value*)state;
-    if (arg.type != TYPE_NUM) return errExprExpectNumeric;
-    Value v = make_num(expf(arg.num));
-    return v;
-}
-Value log_eval(void* state) {
-    Value arg = *(Value*)state;
-    if (arg.type != TYPE_NUM) return errExprExpectNumeric;
-    Value v = make_num(logf(arg.num));
-    return v;
-}
-Value log10_eval(void* state) {
-    Value arg = *(Value*)state;
-    if (arg.type != TYPE_NUM) return errExprExpectNumeric;
-    Value v = make_num(log10f(arg.num));
-    return v;
-}
-Value log2_eval(void* state) {
-    Value arg = *(Value*)state;
-    if (arg.type != TYPE_NUM) return errExprExpectNumeric;
-    Value v = make_num(log2f(arg.num));
-    return v;
-}
+UNARY_EVAL(sin_eval, UNARY_SIN)
+UNARY_EVAL(cos_eval, UNARY_COS)
+UNARY_EVAL(tan_eval, UNARY_TAN)
+UNARY_EVAL(asin_eval, UNARY_ASIN)
+UNARY_EVAL(acos_eval, UNARY_ACOS)
+UNARY_EVAL(atan_eval, UNARY_ATAN)
+UNARY_EVAL(abs_eval, UNARY_ABS)
+UNARY_EVAL(ceil_eval, UNARY_CEIL)
+UNARY_EVAL(floor_eval, UNARY_FLOOR)
+UNARY_EVAL(round_eval, UNARY_ROUND)
+UNARY_EVAL(trunc_eval, UNARY_TRUNC)
+UNARY_EVAL(sqrt_eval, UNARY_SQRT)
+UNARY_EVAL(exp_eval, UNARY_EXP)
+UNARY_EVAL(log_eval, UNARY_LOG)
+UNARY_EVAL(log10_eval, UNARY_LOG10)
+UNARY_EVAL(log2_eval, UNARY_LOG2)
 
 Value dec2bin_eval(void* state) {
     char b[32];
@@ -1372,63 +1354,7 @@ Value eval_expr(void) {
 
         if (v2.type == TYPE_ERROR) return v2; // propagate error
 
-        if (v.type == TYPE_NULL || v2.type == TYPE_NULL) {
-            res = make_num((float)(v.type == TYPE_NULL && v2.type == TYPE_NULL));
-        }
-        else if (is_str_value(&v) || is_str_value(&v2)) {
-            int cmp = 0;
-            if (is_str_value(&v) && is_str_value(&v2)) {
-                cmp = strcmp(v.str, v2.str);
-            }
-            else {
-                cmp = 1;
-            }
-            switch (op) {
-                case tokEq:
-                    res = make_num((float)(cmp == 0));
-                    break;
-                case tokNe:
-                    res = make_num((float)(cmp != 0));
-                    break;
-                case tokLt:
-                    res = make_num((float)(cmp < 0));
-                    break;
-                case tokLe:
-                    res = make_num((float)(cmp <= 0));
-                    break;
-                case tokGt:
-                    res = make_num((float)(cmp > 0));
-                    break;
-                case tokGe:
-                    res = make_num((float)(cmp >= 0));
-                    break;
-            }
-        }
-        else {
-            float n1 = value_to_num(v);
-            float n2 = value_to_num(v2);
-            int cmp = (n1 < n2 ? -1 : (n1 > n2 ? 1 : 0));
-            switch (op) {
-                case tokEq:
-                    res = make_num((float)(cmp == 0));
-                    break;
-                case tokNe:
-                    res = make_num((float)(cmp != 0));
-                    break;
-                case tokLt:
-                    res = make_num((float)(cmp < 0));
-                    break;
-                case tokLe:
-                    res = make_num((float)(cmp <= 0));
-                    break;
-                case tokGt:
-                    res = make_num((float)(cmp > 0));
-                    break;
-                case tokGe:
-                    res = make_num((float)(cmp >= 0));
-                    break;
-            }
-        }
+        compare_values(&res, &v, &v2, op);
         free_val(&v); free_val(&v2);
         v = res;  // continue with the result
     }
