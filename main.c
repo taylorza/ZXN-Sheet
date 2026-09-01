@@ -565,12 +565,19 @@ void remove_dep(Cell* owner, Cell* dep) {
     }
 }
 
+void remove_cell(Cell* cell);
+
 void remove_deps(Cell* c) {
     Dep* d = c->deps;
     while (d) {
         Dep* t = d; d = d->next;
-        remove_revdep(t->cell, c);
+        Cell* dep = t->cell;
+        remove_revdep(dep, c);
         free(t);
+        if (!dep->content && !dep->deps && !dep->revdeps) {
+            remove_cell(dep);
+            free(dep);
+        }
     }
     c->deps = NULL;
 }
@@ -607,20 +614,6 @@ void free_cell(Cell* c) {
     free(c);
 }
 
-#ifdef MEMDBG
-void free_cells(void) {
-    for (int i = 0; i < CELL_TBL_SIZE; i++) {
-        HNode* node = hash_table[i];
-        while (node) {
-            HNode* next = node->next;
-            Cell* c = node->cell;
-            free_cell(c);            
-            node = next;
-        }
-        hash_table[i] = NULL; // clear the hash table entry
-    }
-}
-#endif //MEMDBG
 
 /* Add owner→dependency link both ways */
 void add_dep(Cell* owner, Cell* dep) {
