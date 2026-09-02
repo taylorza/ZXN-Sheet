@@ -1,3 +1,7 @@
+2026/08/31 - Version 0.4a
+- More aggresive memory management, freeing cells that are no longer needed
+- Code size optimization
+
 2026/08/30 - Version 0.4
 - Added string functions: LEFT, RIGHT, MID, LEN
 - Added lookup function, supporting both single and double ranges

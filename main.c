@@ -546,12 +546,11 @@ Cell* new_cell(int c, int r) {
     return p;
 }
 
-void remove_revdep(Cell* c, Cell* dep) {
+void remove_revdep(Cell* c, Dep* target) {
     Dep** pp = &c->revdeps;
-    while (*pp && (*pp)->cell != dep) pp = &(*pp)->next;
+    while (*pp && *pp != target) pp = &(*pp)->revnext;
     if (*pp) {
-        Dep* t = *pp; *pp = t->next; // unlink
-        free(t);
+        *pp = (*pp)->revnext;
     }
 }
 
@@ -560,7 +559,7 @@ void remove_dep(Cell* owner, Cell* dep) {
     while (*pp && (*pp)->cell != dep) pp = &(*pp)->next;
     if (*pp) {
         Dep* t = *pp; *pp = t->next;
-        remove_revdep(dep, owner);
+        remove_revdep(dep, t);
         free(t);
     }
 }
@@ -572,7 +571,7 @@ void remove_deps(Cell* c) {
     while (d) {
         Dep* t = d; d = d->next;
         Cell* dep = t->cell;
-        remove_revdep(dep, c);
+        remove_revdep(dep, t);
         free(t);
         if (!dep->content && !dep->deps && !dep->revdeps) {
             remove_cell(dep);
@@ -608,7 +607,7 @@ void free_cell(Cell* c) {
     free_val(&c->cached);
     remove_deps(c);
     while (c->revdeps) {
-        remove_dep(c->revdeps->cell, c);
+        remove_dep(c->revdeps->owner, c);
     }
     remove_cell(c);
     free(c);
@@ -628,26 +627,21 @@ void add_dep(Cell* owner, Cell* dep) {
         return;
     }
 
-    Dep* r = malloc(sizeof * r);
-    if (r == NULL) {
-        free(d);
-        error(errOutOfMemory.str);
-        return;
-    }
-
     d->cell = dep;
+    d->owner = owner;
     d->next = owner->deps;
     owner->deps = d;
 
-    r->cell = owner; r->next = dep->revdeps; dep->revdeps = r;
+    d->revnext = dep->revdeps;
+    dep->revdeps = d;
 }
 
 /* Mark c and all its dependents dirty */
 void propagate_dirty(Cell* c) {
     if (!(c->flags & FLG_DIRTY)) {
         c->flags |= FLG_DIRTY;
-        for (Dep* d = c->revdeps; d; d = d->next)
-            propagate_dirty(d->cell);
+        for (Dep* d = c->revdeps; d; d = d->revnext)
+            propagate_dirty(d->owner);
     }
 }
 

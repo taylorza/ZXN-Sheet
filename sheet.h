@@ -39,7 +39,9 @@ typedef struct Value {
 
 typedef struct Dep {
     struct Cell* cell;
+    struct Cell* owner;
     struct Dep* next;
+    struct Dep* revnext;
 } Dep;
 
 // One spreadsheet cell
