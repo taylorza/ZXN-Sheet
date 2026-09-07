@@ -44,7 +44,6 @@ void cls(void) MYCC;
 void clreol(void) MYCC;
 
 void putch(char ch) MYCC;
-void putch_at(uint8_t x, uint8_t y, char ch) MYCC;
 void print(const char *fmt, ...) MYCC;
 void prints(const char *s) MYCC;
 char getch(void) MYCC;
@@ -54,8 +53,6 @@ void get_cursor_pos(uint8_t *x, uint8_t *y) MYCC;
 
 void highlight(void) MYCC;
 void standard(void) MYCC;
-
-uint16_t get_ticks(void) MYCC;
 
 uint8_t edit_line(const char* prompt, const char* alphabet, char* buffer, uint8_t maxlen) MYCC;
 

@@ -929,25 +929,44 @@ Value len_eval(void* state) {
     return v;
 }
 
+Value substring_value(const char* source, int start, int length) {
+    Value v = {.type = TYPE_NULL};
+    char* result_str;
+    int source_length;
+
+    if (!source) source = "";
+    source_length = strlen(source);
+    if (start == -1) {
+        if (length < source_length) start = source_length - length;
+        else start = 0;
+    } else if (start > source_length) {
+        return v;
+    }
+    if (length > source_length - start) {
+        length = source_length - start;
+    }
+
+    result_str = malloc(length + 1);
+    if (!result_str) {
+        v = errOutOfMemory;
+        return v;
+    }
+
+    strncpy(result_str, source + start, length);
+    result_str[length] = '\0';
+    v = make_str(result_str);
+    free(result_str);
+    return v;
+}
+
 Value left_eval(void* state) {
     Value* args = (Value*)state;
     if (!is_str_value(&args[0]) || args[1].type != TYPE_NUM) return errExprInvalid;
 
     int n = (int)args[1].num;
+    Value v;
     if (n < 0) return errExprInvalid;
-
-    char* s = args[0].str ? args[0].str : "";
-    size_t len = strlen(s);
-    if ((size_t)n > len) n = (int)len;
-
-    char* result_str = malloc(n + 1);
-    if (!result_str) return errOutOfMemory;
-
-    strncpy(result_str, s, n);
-    result_str[n] = '\0';
-
-    Value v = make_str(result_str);
-    free(result_str);
+    v = substring_value(args[0].str, 0, n);
     return v;
 }
 
@@ -956,46 +975,20 @@ Value right_eval(void* state) {
     if (!is_str_value(&args[0]) || args[1].type != TYPE_NUM) return errExprInvalid;
 
     int n = (int)args[1].num;
+    Value v;
     if (n < 0) return errExprInvalid;
-
-    char* s = args[0].str ? args[0].str : "";
-    size_t len = strlen(s);
-    if ((size_t)n > len) n = (int)len;
-
-    char* result_str = malloc(n + 1);
-    if (!result_str) return errOutOfMemory;
-
-    strncpy(result_str, s + len - n, n);
-    result_str[n] = '\0';
-
-    Value v = make_str(result_str);
-    free(result_str);
+    v = substring_value(args[0].str, -1, n);
     return v;
 }
 
 Value mid_eval(void* state) {
-    Value v = {.type = TYPE_NULL};
-
     Value* args = (Value*)state;
     if (!is_str_value(&args[0]) || args[1].type != TYPE_NUM || args[2].type != TYPE_NUM) return errExprInvalid;
     int start = (int)args[1].num;
     int length = (int)args[2].num;
+    Value v;
     if (start < 1 || length < 0) return errExprInvalid;
-    char* s = args[0].str ? args[0].str : "";
-    size_t len = strlen(s);
-    
-    if ((size_t)(start - 1) > len) return v; // start is beyond the end of the string
-
-    if ((size_t)length > len - (start - 1)) length = (int)(len - (start - 1));
-
-    char* result_str = malloc(length + 1);
-    if (!result_str) return errOutOfMemory;
-
-    strncpy(result_str, s + start - 1, length);
-    result_str[length] = '\0';
-
-    v = make_str(result_str);
-    free(result_str);
+    v = substring_value(args[0].str, start - 1, length);
     return v;
 }
 

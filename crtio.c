@@ -184,14 +184,6 @@ void putch(char ch) MYCC {
     ++cx;  
 }
 
-void putch_at(uint8_t x, uint8_t y, char ch) MYCC {
-    if (x >= SCREEN_WIDTH) x = SCREEN_WIDTH-1;
-    if (y >= SCREEN_HEIGHT) y = SCREEN_HEIGHT-1;
-    char * p = screen+(((y*SCREEN_WIDTH) + x) << 1);
-    *p++ = ch - 32;
-    *p = attr;
-}
-
 void clreol(void) MYCC {
     if (cx > SCREEN_WIDTH-1) return;
     char * p = screen+(((cy*SCREEN_WIDTH) + cx) << 1);
@@ -338,10 +330,6 @@ void highlight(void) MYCC {
 
 void standard(void) MYCC {
     attr = 0b00000000;
-}
-
-uint16_t get_ticks(void) MYCC {
-    return ticks;
 }
 
 uint8_t edit_line(const char* prompt, const char* alphabet, char* buffer, uint8_t maxlen) MYCC {
