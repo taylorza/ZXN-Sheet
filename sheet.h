@@ -46,6 +46,7 @@ typedef struct Dep {
 
 // One spreadsheet cell
 typedef struct Cell {
+    struct Cell* hnext; // next cell in the same hash bucket
     Dep* deps;          // cells this cell references
     Dep* revdeps;       // cells referencing this cell
 

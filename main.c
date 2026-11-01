@@ -47,39 +47,28 @@ void error(const char* fmt, ...) MYCC;
 void status(const char* fmt, ...) MYCC;
 uint8_t get_overlapped_text(int target_col, int row, char* out, int out_size);
 
-typedef struct HNode {
-    Cell* cell;
-    struct HNode* next;
-} HNode;
-
 uint8_t is_str_value(Value *v) {
     return v->type == TYPE_STR || v->type == TYPE_TEXT;
 }
 
-HNode* hash_table[CELL_TBL_SIZE] = { 0 }; // hash table for cells
+Cell* hash_table[CELL_TBL_SIZE] = { 0 }; // hash table for cells
 
 Cell* find_cell(int col, int row) {
     int h = (col + (row * 257)) % CELL_TBL_SIZE;
-    HNode* node = hash_table[h];
-    while (node) {
-        if (node->cell->col == col && node->cell->row == row) {
-            return node->cell;
+    Cell* cell = hash_table[h];
+    while (cell) {
+        if (cell->col == col && cell->row == row) {
+            return cell;
         }
-        node = node->next;
+        cell = cell->hnext;
     }
     return NULL; // not found
 }
 
 void add_cell(Cell* cell) {
     int h = (cell->col + (cell->row * 257)) % CELL_TBL_SIZE;
-    HNode* node = malloc(sizeof(HNode));
-    if (!node) {
-        error(errOutOfMemory.str);
-        return;
-    }
-    node->cell = cell;
-    node->next = hash_table[h];
-    hash_table[h] = node;
+    cell->hnext = hash_table[h];
+    hash_table[h] = cell;
 }
 
 typedef void  (*PFN_ACCUM)(void* state, Cell* cell);
@@ -583,22 +572,21 @@ void remove_deps(Cell* c) {
 
 void remove_cell(Cell* cell) {
     int h = (cell->col + (cell->row * 257)) % CELL_TBL_SIZE;
-    HNode* node = hash_table[h];
-    HNode* prev = NULL;
+    Cell* node = hash_table[h];
+    Cell* prev = NULL;
 
     while (node) {
-        if (node->cell == cell) {
+        if (node == cell) {
             if (prev) {
-                prev->next = node->next;
+                prev->hnext = node->hnext;
             }
             else {
-                hash_table[h] = node->next;
+                hash_table[h] = node->hnext;
             }
-            free(node);
             return;
         }
         prev = node;
-        node = node->next;
+        node = node->hnext;
     }
 }
 
@@ -2174,9 +2162,8 @@ int do_save(void) MYCC {
     if (errno) return errno;
 
     for (int i = 0; i < CELL_TBL_SIZE; i++) {
-        HNode* node = hash_table[i];
-        while (node) {
-            Cell* c = node->cell;
+        Cell* c = hash_table[i];
+        while (c) {
             if (c->content && *c->content) {
                 char prefix[12];
                 int prefix_len = snprintf(prefix, sizeof(prefix), "%c%d:", 'A' + c->col, c->row + 1);
@@ -2193,7 +2180,7 @@ int do_save(void) MYCC {
                     return err;
                 }
             }
-            node = node->next;
+            c = c->hnext;
         }
     }
     close_file(f);
