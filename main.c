@@ -746,7 +746,8 @@ Value sum_eval(void* state) {
 
 Value avg_eval(void* state) {
     AccumState* acc = (AccumState*)state;
-    Value v = make_num(acc->count ? acc->total / acc->count : 0);
+    if (acc->count == 0) return errExprDivZero;
+    Value v = make_num(acc->total / acc->count);
     return v;
 }
 
@@ -1102,6 +1103,7 @@ Value process_range(
             }
             else {
                 eval_cell(cell);
+                if (cell->flags & FLG_VISITING) return errExprCyclicRef;
             }
             pfnAccum(state, cell);
         }
@@ -1137,6 +1139,10 @@ Value process_conditional_range(
             }
             else {
                 eval_cell(cell);
+                if (cell->flags & FLG_VISITING) {
+                    condition_cell = previous_condition_cell;
+                    return errExprCyclicRef;
+                }
             }
 
             condition_cell = cell;
@@ -1236,7 +1242,7 @@ void set_cell(int c, int r, const char* s) MYCC {
     else {
         char* end;
         float v = strtof(txtbuf, &end);
-        if (end > txtbuf && *end == 0) {
+        if (end > txtbuf && *end == 0 && strspn(txtbuf, "0123456789+-.eE") == strlen(txtbuf)) {
             /* pure number → treat as single-term formula */
             p->flags |= FLG_FORMULA;
             p->content = malloc(txt_len + 2);
@@ -1352,20 +1358,35 @@ Value eval_expr1(void) {
         Value v2 = eval_term();
         if (v2.type == TYPE_ERROR) return v2; // propagate error
         if (op == tokPlus && (is_str_value(&v) || is_str_value(&v2))) {
-            char buf[CELL_W] = { 0 }, tmp1[CELL_W] = { 0 }, tmp2[CELL_W] = { 0 };
-            
+            char n1[16], n2[16];
+            const char* s1 = "";
+            const char* s2 = "";
+
             if (is_str_value(&v)) {
-                if (v.str) strncpy(tmp1, v.str, CELL_W - 1);
+                if (v.str) s1 = v.str;
             }
-            else snprintf(tmp1, sizeof(tmp1), "%g", v.num);
+            else {
+                snprintf(n1, sizeof(n1), "%g", v.num);
+                s1 = n1;
+            }
 
             if (is_str_value(&v2)) {
-                if (v2.str) strncpy(tmp2, v2.str, CELL_W - 1);
+                if (v2.str) s2 = v2.str;
             }
-            else snprintf(tmp2, sizeof(tmp2), "%g", v2.num);
+            else {
+                snprintf(n2, sizeof(n2), "%g", v2.num);
+                s2 = n2;
+            }
 
-            snprintf(buf, sizeof(buf), "%s%s", tmp1, tmp2);
-            res = make_str(buf);
+            char* buf = malloc(strlen(s1) + strlen(s2) + 1);
+            if (!buf) {
+                free_val(&v); free_val(&v2);
+                return errOutOfMemory;
+            }
+            strcpy(buf, s1);
+            strcat(buf, s2);
+            res.type = TYPE_STR;
+            res.str = buf;
         }
         else {
             float n1 = value_to_num(v);
@@ -1415,6 +1436,7 @@ Value eval_term(void) {
                 break;
         }
         free_val(&v); free_val(&v2);
+        if (res.type == TYPE_ERROR) return res; // stop at the first error
         v = res;  // continue with the result
     }
     return res;
@@ -1706,20 +1728,24 @@ lookup_cleanup:
                 get_token(); // skip comma                
             }
 
+            if (v.type == TYPE_ERROR) {
+                goto scalar_cleanup; // propagate error
+            }
+
             if (arg_count < local_function->min_args || arg_count > local_function->max_args) {
                 v = errInvalidArg; // invalid number of arguments
                 goto scalar_cleanup;
             }
 
-
-            if (v.type == TYPE_ERROR) {
-                goto scalar_cleanup; // propagate error
-            }
-
-            v = local_function->pfn_eval(args);
-
-            if (!expect_token(tokRParen)) {
-                v = errExprExpectRParen;
+            {
+                Value result = local_function->pfn_eval(args);
+                if (!expect_token(tokRParen)) {
+                    free_val(&result);
+                    v = errExprExpectRParen;
+                }
+                else {
+                    v = result;
+                }
             }
 
 scalar_cleanup:
@@ -1762,6 +1788,7 @@ void eval_cell_core(Cell* c) {
 
     if (c->flags & FLG_VISITING) {
         // cycle detected
+        free_val(&c->cached);
         c->cached = errExprCyclicRef;
         return;
     }
@@ -2110,8 +2137,10 @@ void sheet_update_filename(void) MYCC {
     char untitled[] = "Untitled";
     char format[] = "Filename:%s%s%c";
     char* filepart = e_filename ? e_filename + offs : untitled;
-    if (e_filename && strlen(e_filename) >= SCREEN_WIDTH) {
-        offs = strlen(e_filename) - SCREEN_WIDTH;
+    // leave room for "Filename:", the ellipsis and the dirty flag so the line never wraps
+    const int max_name = SCREEN_WIDTH - 9 - 1 - 1;
+    if (e_filename && (int)strlen(e_filename) > max_name) {
+        offs = (int)strlen(e_filename) - (max_name - 3);
         filepart = e_filename + offs;
     }
     print(format, offs ? ellipsis : empty, filepart, is_dirty ? '*' : ' ');
@@ -2124,6 +2153,13 @@ char* get_filename(char* path) MYCC {
     char* p = s + strlen(path);
     while (p > s && *(p - 1) != '/' && *(p - 1) != '\\') --p;
     return p;
+}
+
+/* Returns 0 when all bytes were written, otherwise an errno-style code. */
+static int write_all(void* f, const char* buf, size_t n) {
+    int written = write_file(f, buf, n);
+    if (written < 0 || (size_t)written != n) return EIO;
+    return 0;
 }
 
 int do_save(void) MYCC {
@@ -2151,22 +2187,12 @@ int do_save(void) MYCC {
                     return EIO;
                 }
 
-                write_file(f, prefix, (size_t)prefix_len);
-                if (errno) {
+                int err = write_all(f, prefix, (size_t)prefix_len);
+                if (!err) err = write_all(f, c->content, strlen(c->content));
+                if (!err) err = write_all(f, "\r\n", 2);
+                if (err) {
                     close_file(f);
-                    return errno;
-                }
-
-                write_file(f, c->content, strlen(c->content));
-                if (errno) {
-                    close_file(f);
-                    return errno;
-                }
-
-                write_file(f, "\r\n", 2);
-                if (errno) {
-                    close_file(f);
-                    return errno;
+                    return err;
                 }
             }
             node = node->next;
@@ -2204,28 +2230,47 @@ void do_load(const char* filepath) MYCC {
     void* f = open_file(filepath);
 
     if (f != NULL) {
+        char* line = ln;
+        size_t cap = sizeof(ln);
+        size_t pos = 0;
+        uint8_t oom = 0;
         int bytes = read_file(f, tmpbuffer, sizeof(tmpbuffer));
-        int pos = 0;
-        while (bytes > 0) {
-            for (int i = 0; i < bytes; i++) {
-                if (tmpbuffer[i] == '\r' || tmpbuffer[i] == '\n') {
+        while (bytes > 0 && !oom) {
+            for (int i = 0; i < bytes && !oom; i++) {
+                char c = tmpbuffer[i];
+                if (c == '\r' || c == '\n') {
                     if (pos > 0) {
-                        ln[pos] = 0; // terminate line
-                        load_line(ln);
+                        line[pos] = 0; // terminate line
+                        load_line(line);
                         pos = 0; // reset position for next line
                     }
+                    continue;
                 }
-                else if (pos < sizeof(ln) - 1) // prevent overflow
-                    ln[pos++] = tmpbuffer[i];
+                if (pos + 1 >= cap) {
+                    // grow the line buffer so long cell contents are not truncated
+                    size_t ncap = cap * 2;
+                    char* grown = malloc(ncap);
+                    if (!grown) {
+                        error(errOutOfMemory.str);
+                        oom = 1;
+                        break;
+                    }
+                    memcpy(grown, line, pos);
+                    if (line != ln) free(line);
+                    line = grown;
+                    cap = ncap;
+                }
+                line[pos++] = c;
             }
-            bytes = read_file(f, tmpbuffer, sizeof(tmpbuffer));
+            if (!oom) bytes = read_file(f, tmpbuffer, sizeof(tmpbuffer));
         }
 
-        if (pos > 0) {
-            ln[pos] = 0; // process last line even without trailing CR/LF
-            load_line(ln);
+        if (!oom && pos > 0) {
+            line[pos] = 0; // process last line even without trailing CR/LF
+            load_line(line);
         }
 
+        if (line != ln) free(line);
         close_file(f);
     }
 
@@ -2237,15 +2282,31 @@ void do_load(const char* filepath) MYCC {
 
 CommandAction sheet_save(void) MYCC {
     set_cursor_pos(0, INPUT_LINE_ROW);
-    
-    char* p = get_filename(filename);
-    if (!edit_line("File name", NULL, p, 250))
+
+    // edit a copy of the file name so ESC leaves the current name untouched
+    char* base = get_filename(filename);
+    size_t prefix_len = (size_t)(base - filename);
+    char name[251];
+    memset(name, 0, sizeof(name));
+    strncpy(name, base, sizeof(name) - 1);
+    if (!edit_line("File name", NULL, name, (uint8_t)(250 - prefix_len)))
         return COMMAND_ACTION_CANCEL;
 
+    if (name[0] == 0) {
+        error("File name cannot be empty");
+        return COMMAND_ACTION_FAILED;
+    }
+
+    char saved[251];
+    strcpy(saved, filename);
+    strcpy(base, name);
     e_filename = &filename[0];
-    int status = do_save();
-    if (status) {
-        error("Error saving file: %s", strerror(status));
+
+    int save_err = do_save();
+    if (save_err) {
+        strcpy(filename, saved);
+        e_filename = &filename[0];
+        error("Error saving file: %s", strerror(save_err));
         return COMMAND_ACTION_FAILED;
     }
     

@@ -381,8 +381,8 @@ uint8_t edit_line(const char* prompt, const char* alphabet, char* buffer, uint8_
                     if (!alphabet || strchr(alphabet, ch)) {
                         memmove(buffer + i + 1, buffer + i, len - i);
                         buffer[i++] = ch;
-                        if (i > len) buffer[i] = '\0';
                         ++len;
+                        buffer[len] = '\0';
                         redraw = 1;
                     }
                 }
