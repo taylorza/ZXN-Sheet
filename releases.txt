@@ -1,3 +1,8 @@
+2026/11/01 - Version 0.4b
+- Reduced per cell memory allocations
+- Reduced overall memory footprint
+- Fixed potential buffer overflow in edit line
+
 2026/08/31 - Version 0.4a
 - More aggresive memory management, freeing cells that are no longer needed
 - Code size optimization

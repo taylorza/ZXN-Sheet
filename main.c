@@ -17,7 +17,7 @@
 #include "crtio.h"
 #include "sheet.h"
 
-#define VERSION "0.4a"
+#define VERSION "0.4b"
 
 typedef enum { REDRAW_ALL, REDRAW_CONTENT, REDRAW_CURSOR } REDRAW_MODE;
 
