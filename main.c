@@ -855,45 +855,43 @@ UNARY_EVAL(log_eval, UNARY_LOG)
 UNARY_EVAL(log10_eval, UNARY_LOG10)
 UNARY_EVAL(log2_eval, UNARY_LOG2)
 
-Value dec2bin_eval(void* state) {
+static Value dec_to_base_eval(void* state, int base) {
     char b[32];
     Value arg = *(Value*)state;
     if (arg.type != TYPE_NUM) return errExprExpectNumeric;
-    int n = (int)arg.num;
-    itoa(n, b, 2);
+    if (base == 2) itoa((int)arg.num, b, 2);
+    else itoa((int)arg.num, b, 16);
     Value v = make_str(b);
+    return v;
+}
+
+static Value base_to_dec_eval(void* state, int base) {
+    Value arg = *(Value*)state;
+    if (!is_str_value(&arg)) return errInvalidArg;
+
+    int n;
+    if (!parse_int_base(arg.str, base, &n)) return errExprInvalid;
+    Value v = make_num((float)n);
+    return v;
+}
+
+Value dec2bin_eval(void* state) {
+    Value v = dec_to_base_eval(state, 2);
     return v;
 }
 
 Value bin2dec_eval(void* state) {
-    Value arg = *(Value*)state;
-    if (!is_str_value(&arg)) return errInvalidArg;
-
-    int n;
-    if (!parse_int_base(arg.str, 2, &n)) return errExprInvalid;
-
-    Value v = make_num((float)n);
+    Value v = base_to_dec_eval(state, 2);
     return v;
 }
 
 Value dec2hex_eval(void* state) {
-    char b[32];
-    Value arg = *(Value*)state;
-    if (arg.type != TYPE_NUM) return errExprExpectNumeric;
-    int n = (int)arg.num;
-    itoa(n, b, 16);
-    Value v = make_str(b);
+    Value v = dec_to_base_eval(state, 16);
     return v;
 }
 
 Value hex2dec_eval(void* state) {
-    Value arg = *(Value*)state;
-    if (!is_str_value(&arg)) return errInvalidArg;
-
-    int n;
-    if (!parse_int_base(arg.str, 16, &n)) return errExprInvalid;
-
-    Value v = make_num((float)n);
+    Value v = base_to_dec_eval(state, 16);
     return v;
 }
 
